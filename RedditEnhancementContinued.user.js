@@ -64,7 +64,7 @@
         defaults: {
             // Core
             darkMode: true,
-            theme: 'dracula',
+            theme: 'amoled',
             neverEndingReddit: true,
             nerPauseAfterPages: 0,
             inlineImageExpansion: true,
@@ -72,7 +72,7 @@
             keyboardNav: true,
             commentHighlighting: true,
             collapseChildComments: true,
-            collapseChildCommentsDefault: false,
+            collapseChildCommentsDefault: true,
             collapseChildCommentsNested: false,
             collapseChildCommentsHideNested: false,
             postFiltering: true,
@@ -98,12 +98,12 @@
             expandContinueThread: true,
             noParticipation: true,
             showTimestamps: true,
-            hideGoldButton: false,
-            hideShareButton: false,
-            hideSaveButton: false,
-            hideCrosspostButton: false,
-            hideReportButton: false,
-            hideSidebar: false,
+            hideGoldButton: true,
+            hideShareButton: true,
+            hideSaveButton: true,
+            hideCrosspostButton: true,
+            hideReportButton: true,
+            hideSidebar: true,
             autoHideAfterVote: false,
             scrollToTopOnNav: true,
             showUserInfo: true,
@@ -113,21 +113,23 @@
             // Keyboard shortcut modifier
             kbModifier: 'none',
             // New v2.1 features from uploaded scripts
-            removeSubredditStyles: false,
-            wideView: false,
-            subredditDescription: false,
-            stateSaver: false,
-            downloadButtons: false,
-            adBlocker: false,
+            removeSubredditStyles: true,
+            wideView: true,
+            subredditDescription: true,
+            stateSaver: true,
+            downloadButtons: true,
+            adBlocker: true,
             // v2.4 UX enhancements
             enhancedUI: true,
             // v2.7 Classic Reddit++ features
             viewCounter: true,
             voteEstimator: true,
             fullScores: true,
-            userPrefix: false,
+            userPrefix: true,
             notificationRedirect: true,
-            trendingSubreddits: false
+            trendingSubreddits: false,
+            // Migration flag (skip v2.2.1 migration for new installs)
+            _migratedV221: true
         }
     };
 
