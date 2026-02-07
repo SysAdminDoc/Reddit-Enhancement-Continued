@@ -2077,7 +2077,7 @@
                 const gear = Utils.createElement('span', {
                     className: 'rel-settings-btn',
                     textContent: '\u2699',
-                    title: 'Reddit Enhancement Lite Settings',
+                    title: 'Reddit Enhancement Continued Settings',
                     onClick: () => this.showPanel()
                 });
                 userbar.prepend(gear);
@@ -2189,7 +2189,7 @@
 
             // Header
             const header = Utils.createElement('div', { className: 'rel-settings-header' });
-            header.innerHTML = `<h2>\u2699 Reddit Enhancement Lite <span class="rel-version">v${VERSION}</span></h2>`;
+            header.innerHTML = `<h2>\u2699 Reddit Enhancement Continued <span class="rel-version">v${VERSION}</span></h2>`;
             const closeBtn = Utils.createElement('button', { className: 'rel-settings-close', textContent: '\u2715', onClick: () => overlay.remove() });
             header.appendChild(closeBtn);
             panel.appendChild(header);
@@ -2542,7 +2542,7 @@
             const resetBtn = Utils.createElement('button', {
                 className: 'rel-btn-small rel-btn-danger', textContent: 'Reset All',
                 onClick: () => {
-                    if (confirm('Reset ALL Reddit Enhancement Lite settings to defaults? This cannot be undone.')) {
+                    if (confirm('Reset ALL Reddit Enhancement Continued settings to defaults? This cannot be undone.')) {
                         Object.values(CONFIG.storageKeys).forEach(key => Storage.remove(key));
                         Utils.notify('All settings reset. Reloading...', 'warning');
                         setTimeout(() => location.reload(), 1000);
@@ -5560,7 +5560,7 @@
         // Filter module (run last)
         FilterModule.init();
 
-        console.log(`Reddit Enhancement Lite v${VERSION} loaded - ${Object.keys(Themes.definitions).length} themes, ${Object.keys(settings).filter(k => settings[k] === true).length} features active`);
+        console.log(`Reddit Enhancement Continued v${VERSION} loaded - ${Object.keys(Themes.definitions).length} themes, ${Object.keys(settings).filter(k => settings[k] === true).length} features active`);
 
         // Safety check: verify posts are visible after all modules loaded
         setTimeout(() => {
