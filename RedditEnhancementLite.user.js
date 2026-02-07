@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Enhancement Lite
 // @namespace    https://github.com/reddit-enhancement-lite
-// @version      2.7.2
+// @version      2.7.3
 // @description  A comprehensive enhancement suite for old.reddit.com - themes, navigation, filtering, media, and more
 // @author       Reddit Enhancement Lite
 // @match        https://old.reddit.com/*
@@ -34,6 +34,9 @@
 // @connect      www.reddit.com
 // @connect      api.reddit.com
 // @run-at       document-start
+// @icon         https://b.thumbs.redditmedia.com/JeP1WF0kEiiH1gT8vOr_7kFAwIlHzRBHjLDZIkQP61Q.jpg
+// @downloadURL  https://github.com/SysAdminDoc/RedditCC/raw/refs/heads/main/RedditEnhancementLite.user.js
+// @updateURL    https://github.com/SysAdminDoc/RedditCC/raw/refs/heads/main/RedditEnhancementLite.user.js
 // @noframes
 // ==/UserScript==
 
@@ -43,7 +46,7 @@
     // =========================================================================
     // CONFIGURATION & STORAGE
     // =========================================================================
-    const VERSION = '2.7.2';
+    const VERSION = '2.7.3';
 
     const CONFIG = {
         version: VERSION,
@@ -2130,7 +2133,7 @@
                     { key: 'formattingToolbar', label: 'Formatting Toolbar', desc: 'Markdown formatting buttons and live preview' },
                     { key: 'livePreview', label: 'Live Preview', desc: 'Preview markdown as you type' },
                     { key: 'expandContinueThread', label: 'Expand Continue Thread', desc: 'Load continued threads inline' },
-                    { key: 'hideAutoModerator', label: 'Hide AutoModerator', desc: 'Collapse AutoModerator comments' },
+                    { key: 'hideAutoModerator', label: 'Hide Bot Comments', desc: 'Auto-collapse AutoModerator, mod-bots, and other known bot comments' },
                     { key: 'depthColorScheme', label: 'Depth Colors', desc: 'Color scheme for depth indicators', type: 'select',
                       options: [
                           { value: 'rainbow', label: 'Rainbow' },
@@ -3492,9 +3495,66 @@
     // HIDE AUTOMODERATOR MODULE
     // =========================================================================
     const HideAutoModeratorModule = {
+        // Common bot/automod patterns
+        botPatterns: [
+            'automoderator', 'botdefense', 'assistantbot', 'remindmebot',
+            'sneakpeekbot', 'wikisummarizerbot', 'fatfingerhelperbot',
+            'repostsleuthbot', 'savevideo', 'haikibot', 'sub_doesnt_exist_bot'
+        ],
+
+        isBot(name) {
+            if (!name) return false;
+            const lower = name.toLowerCase();
+            // Exact match against known bots
+            if (this.botPatterns.includes(lower)) return true;
+            // Suffix match for subreddit mod-bots (e.g. ClaudeAI-mod-bot)
+            if (lower.endsWith('-mod-bot') || lower.endsWith('_mod_bot') || lower.endsWith('modbot')) return true;
+            return false;
+        },
+
         init() {
             if (!settings.hideAutoModerator) return;
+            this.injectCSS();
             this.process(document);
+        },
+
+        injectCSS() {
+            const t = Themes.getTheme();
+            GM_addStyle(`
+                .rel-automod-hidden > .entry > .usertext-body,
+                .rel-automod-hidden > .entry > form > .usertext-body,
+                .rel-automod-hidden > .child,
+                .rel-automod-hidden > .entry > .flat-list {
+                    display: none !important;
+                }
+                .rel-automod-label {
+                    display: none;
+                    font-size: 11px;
+                    color: ${t.fgDim};
+                    margin-left: 6px;
+                    cursor: pointer;
+                    font-style: italic;
+                    opacity: 0.7;
+                }
+                .rel-automod-label:hover {
+                    opacity: 1;
+                    color: ${t.accent};
+                    text-decoration: underline;
+                }
+                .rel-automod-hidden > .entry > .tagline .rel-automod-label {
+                    display: inline !important;
+                }
+                .rel-automod-hidden > .entry {
+                    opacity: 0.5 !important;
+                    padding: 4px 10px !important;
+                }
+                .rel-automod-hidden > .entry:hover {
+                    opacity: 0.8 !important;
+                }
+                .rel-automod-hidden > .midcol {
+                    display: none !important;
+                }
+            `);
         },
 
         process(container) {
@@ -3502,15 +3562,28 @@
             const comments = container.querySelectorAll('.comment:not([data-rel-automod])');
             comments.forEach(comment => {
                 comment.setAttribute('data-rel-automod', '1');
-                const author = comment.querySelector('.author');
-                if (author && (author.textContent === 'AutoModerator' || author.textContent === 'BotDefense')) {
-                    const entry = comment.querySelector('.entry');
-                    if (entry) {
-                        const toggle = comment.querySelector('.expand');
-                        if (toggle && !comment.classList.contains('collapsed')) {
-                            toggle.click();
-                        }
-                    }
+                const authorName = comment.getAttribute('data-author') ||
+                    comment.querySelector('.author')?.textContent;
+
+                if (!this.isBot(authorName)) return;
+
+                // Hide via our own class (no jQuery dependency)
+                comment.classList.add('rel-automod-hidden');
+
+                // Add toggle label to tagline
+                const tagline = comment.querySelector('.tagline');
+                if (tagline && !tagline.querySelector('.rel-automod-label')) {
+                    const label = document.createElement('span');
+                    label.className = 'rel-automod-label';
+                    label.textContent = '[bot comment hidden - click to show]';
+                    label.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        comment.classList.toggle('rel-automod-hidden');
+                        label.textContent = comment.classList.contains('rel-automod-hidden')
+                            ? '[bot comment hidden - click to show]'
+                            : '[click to hide]';
+                    });
+                    tagline.appendChild(label);
                 }
             });
         }
