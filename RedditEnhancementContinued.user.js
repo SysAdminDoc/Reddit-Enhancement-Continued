@@ -35,8 +35,8 @@
 // @connect      api.reddit.com
 // @run-at       document-start
 // @icon         https://b.thumbs.redditmedia.com/JeP1WF0kEiiH1gT8vOr_7kFAwIlHzRBHjLDZIkQP61Q.jpg
-// @downloadURL  https://github.com/SysAdminDoc/RedditCC/raw/refs/heads/main/RedditEnhancementLite.user.js
-// @updateURL    https://github.com/SysAdminDoc/RedditCC/raw/refs/heads/main/RedditEnhancementLite.user.js
+// @downloadURL  https://github.com/SysAdminDoc/Reddit-Enhancement-Continued/raw/refs/heads/main/RedditEnhancementContinued.user.js
+// @updateURL    https://github.com/SysAdminDoc/Reddit-Enhancement-Continued/raw/refs/heads/main/RedditEnhancementContinued.user.js
 // @noframes
 // ==/UserScript==
 
