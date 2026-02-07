@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Reddit Enhancement Lite
-// @namespace    https://github.com/reddit-enhancement-lite
-// @version      2.7.3
+// @name         Reddit Enhancement Continued
+// @namespace    https://github.com/SysAdminDoc/Reddit-Enhancement-Continued
+// @version      2.7.5
 // @description  A comprehensive enhancement suite for old.reddit.com - themes, navigation, filtering, media, and more
-// @author       Reddit Enhancement Lite
+// @author       Reddit Enhancement Continued
 // @match        https://old.reddit.com/*
 // @match        https://www.reddit.com/*
 // @match        https://reddit.com/*
@@ -46,7 +46,7 @@
     // =========================================================================
     // CONFIGURATION & STORAGE
     // =========================================================================
-    const VERSION = '2.7.3';
+    const VERSION = '2.7.5';
 
     const CONFIG = {
         version: VERSION,
@@ -99,6 +99,10 @@
             noParticipation: true,
             showTimestamps: true,
             hideGoldButton: false,
+            hideShareButton: false,
+            hideSaveButton: false,
+            hideCrosspostButton: false,
+            hideReportButton: false,
             hideSidebar: false,
             autoHideAfterVote: false,
             scrollToTopOnNav: true,
@@ -370,6 +374,8 @@
             if (settings.showUserInfo) UserInfoModule.process(container);
             if (settings.downloadButtons) DownloadButtonsModule.process(container);
             if (settings.adBlocker) AdBlockModule.process(container);
+            if (settings.viewCounter) ViewCounterModule.process(container);
+            if (settings.voteEstimator) VoteEstimatorModule.process(container);
         }
     };
 
@@ -1379,6 +1385,10 @@
 
             /* Hide gold button */
             .rel-hide-gold .give-gold-button { display: none !important; }
+            .rel-hide-share li.share { display: none !important; }
+            .rel-hide-save li.link-save-button, .rel-hide-save li.comment-save-button { display: none !important; }
+            .rel-hide-crosspost li.crosspost-button { display: none !important; }
+            .rel-hide-report li.report-button { display: none !important; }
 
             /* Tag styles */
             .rel-user-tag {
@@ -2098,6 +2108,10 @@
                     { key: 'oldFavicon', label: 'Old Reddit Favicon', desc: 'Restore the classic Snoo favicon' },
                     { key: 'collapsibleSidebar', label: 'Collapsible Sidebar', desc: 'Toggle sidebar visibility' },
                     { key: 'hideGoldButton', label: 'Hide Gold Button', desc: 'Remove give gold buttons' },
+                    { key: 'hideShareButton', label: 'Hide Share Button', desc: 'Remove share buttons from posts and comments' },
+                    { key: 'hideSaveButton', label: 'Hide Save Button', desc: 'Remove save buttons from posts and comments' },
+                    { key: 'hideCrosspostButton', label: 'Hide Crosspost Button', desc: 'Remove crosspost buttons from posts' },
+                    { key: 'hideReportButton', label: 'Hide Report Button', desc: 'Remove report buttons from posts and comments' },
                     { key: 'hideSidebar', label: 'Auto-Hide Sidebar', desc: 'Start with sidebar collapsed' },
                     { key: 'selectedEntryHighlight', label: 'Selected Entry Highlight', desc: 'Outline currently focused post/comment' },
                     { key: 'customCSS', label: 'Custom CSS', desc: 'Add your own CSS rules', type: 'textarea' },
@@ -2269,6 +2283,18 @@
                 }
                 if (def.key === 'hideGoldButton') {
                     document.body.classList.toggle('rel-hide-gold', input.checked);
+                }
+                if (def.key === 'hideShareButton') {
+                    document.body.classList.toggle('rel-hide-share', input.checked);
+                }
+                if (def.key === 'hideSaveButton') {
+                    document.body.classList.toggle('rel-hide-save', input.checked);
+                }
+                if (def.key === 'hideCrosspostButton') {
+                    document.body.classList.toggle('rel-hide-crosspost', input.checked);
+                }
+                if (def.key === 'hideReportButton') {
+                    document.body.classList.toggle('rel-hide-report', input.checked);
                 }
             });
             toggle.appendChild(input);
@@ -2585,6 +2611,18 @@
             if (settings.hideGoldButton) {
                 document.body.classList.add('rel-hide-gold');
             }
+            if (settings.hideShareButton) {
+                document.body.classList.add('rel-hide-share');
+            }
+            if (settings.hideSaveButton) {
+                document.body.classList.add('rel-hide-save');
+            }
+            if (settings.hideCrosspostButton) {
+                document.body.classList.add('rel-hide-crosspost');
+            }
+            if (settings.hideReportButton) {
+                document.body.classList.add('rel-hide-report');
+            }
         }
     };
 
@@ -2852,7 +2890,7 @@
                     src: imgUrl, style: { maxWidth: '100%', maxHeight: '600px', cursor: 'pointer', borderRadius: '4px' },
                     onClick: () => window.open(imgUrl, '_blank')
                 });
-                img.addEventListener('error', () => { container.innerHTML = `<a href="${url}" target="_blank">[Image failed to load]</a>`; });
+                img.addEventListener('error', () => { container.innerHTML = `<a href="${Utils.escapeHTML(url)}" target="_blank">[Image failed to load]</a>`; });
 
                 // Drag to resize
                 let startY, startH;
@@ -4666,34 +4704,30 @@
     const SubredditStyleRemoverModule = {
         init() {
             if (!settings.removeSubredditStyles) return;
-            // Instead of REMOVING subreddit stylesheets (which can break layout),
-            // DISABLE them by setting media="not all". This preserves the DOM and
-            // lets users re-enable easily, while our dark mode CSS takes over visuals.
-            const disableStyles = () => {
-                document.querySelectorAll(
-                    'link[ref="applied_subreddit_stylesheet"], link[title="applied_subreddit_stylesheet"]'
-                ).forEach(s => {
-                    if (s.getAttribute('media') !== 'not all') {
-                        s.setAttribute('data-rel-disabled', '1');
-                        s.setAttribute('media', 'not all');
-                    }
-                });
-            };
-            disableStyles();
-            // MutationObserver to catch late-loading stylesheets
-            const head = document.head || document.documentElement;
-            new MutationObserver(disableStyles).observe(head, { childList: true });
-
+            // Skip observer if early init already set it up (avoid duplicate)
+            if (!this._earlyInitDone) {
+                const disableStyles = () => {
+                    document.querySelectorAll(
+                        'link[ref="applied_subreddit_stylesheet"], link[title="applied_subreddit_stylesheet"]'
+                    ).forEach(s => {
+                        if (s.getAttribute('media') !== 'not all') {
+                            s.setAttribute('data-rel-disabled', '1');
+                            s.setAttribute('media', 'not all');
+                        }
+                    });
+                };
+                disableStyles();
+                const head = document.head || document.documentElement;
+                new MutationObserver(disableStyles).observe(head, { childList: true });
+            }
             // Also uncheck "Use subreddit style" checkbox if present
-            document.addEventListener('DOMContentLoaded', () => {
-                const styleOverride = document.getElementById('sr-style-bar');
-                if (styleOverride) {
-                    const checkbox = styleOverride.querySelector('input[type="checkbox"]');
-                    if (checkbox && checkbox.checked) {
-                        checkbox.click();
-                    }
+            const styleOverride = document.getElementById('sr-style-bar');
+            if (styleOverride) {
+                const checkbox = styleOverride.querySelector('input[type="checkbox"]');
+                if (checkbox && checkbox.checked) {
+                    checkbox.click();
                 }
-            });
+            }
         }
     };
 
@@ -4969,6 +5003,7 @@
         NotificationRedirectModule.init();
 
         if (settings.removeSubredditStyles) {
+            SubredditStyleRemoverModule._earlyInitDone = true;
             const disableStyles = () => {
                 document.querySelectorAll(
                     'link[ref="applied_subreddit_stylesheet"], link[title="applied_subreddit_stylesheet"]'
@@ -5046,47 +5081,14 @@
         }
     };
 
-    // --- View Counter ---
-    const ViewCounterModule = {
+    // --- Shared Post Data Cache (used by ViewCounter + VoteEstimator) ---
+    const PostDataCache = {
         cache: {},
-        init() {
-            if (!settings.viewCounter) return;
-            this.processAllPosts();
-            // Watch for NER/dynamic content
-            const container = document.getElementById('siteTable') || document.body;
-            new MutationObserver(() => this.processAllPosts()).observe(container, { childList: true, subtree: true });
-        },
-        formatNumber(num) {
-            if (!num || num === 0) return '? views';
-            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M views';
-            if (num >= 1000) return (num / 1000).toFixed(1) + 'K views';
-            return num + ' views';
-        },
-        getPostId(el) {
-            if (el?.dataset?.fullname) return el.dataset.fullname.replace('t3_', '');
-            const idClass = el ? Array.from(el.classList).find(c => c.startsWith('id-t3_')) : null;
-            if (idClass) return idClass.replace('id-t3_', '');
-            const urlMatch = window.location.pathname.match(/\/comments\/([a-z0-9]+)\//i);
-            return urlMatch ? urlMatch[1] : null;
-        },
-        insertViewCount(el, text) {
-            const tagline = el.querySelector('.tagline');
-            if (!tagline || tagline.querySelector('.rel-view-count')) return;
-            const t = Themes.getTheme();
-            const span = document.createElement('span');
-            span.className = 'rel-view-count';
-            span.textContent = text;
-            span.style.cssText = `margin-right:6px;color:${t.muted};font-size:0.85em;opacity:0.8;`;
-            // Insert after score or at start
-            const score = tagline.querySelector('.score');
-            if (score) score.after(span);
-            else tagline.prepend(span);
-        },
-        fetchPostData(postId, elements) {
-            if (this.cache[postId]) {
-                elements.forEach(el => this.insertViewCount(el, this.cache[postId]));
-                return;
-            }
+        pending: {},
+        fetch(postId, callback) {
+            if (this.cache[postId]) { callback(this.cache[postId]); return; }
+            if (this.pending[postId]) { this.pending[postId].push(callback); return; }
+            this.pending[postId] = [callback];
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: `https://www.reddit.com/by_id/t3_${postId}.json`,
@@ -5095,45 +5097,74 @@
                     try {
                         const data = JSON.parse(response.responseText);
                         const post = data.data.children[0].data;
-                        let views = post.view_count || post.num_views || post.viewCount || null;
-                        if (!views) {
-                            // Estimate from score + ratio
-                            const score = post.score || 0;
-                            const ratio = post.upvote_ratio || 0.5;
-                            if (ratio > 0.5) {
-                                const estUp = Math.round(score / (2 * ratio - 1));
-                                views = estUp * 25;
-                            }
-                        }
-                        const formatted = this.formatNumber(views);
-                        this.cache[postId] = formatted;
-                        elements.forEach(el => this.insertViewCount(el, formatted));
+                        this.cache[postId] = post;
+                        (this.pending[postId] || []).forEach(cb => cb(post));
                     } catch (e) {
-                        elements.forEach(el => this.insertViewCount(el, '? views'));
+                        (this.pending[postId] || []).forEach(cb => cb(null));
                     }
+                    delete this.pending[postId];
                 },
                 onerror: () => {
-                    elements.forEach(el => this.insertViewCount(el, '? views'));
+                    (this.pending[postId] || []).forEach(cb => cb(null));
+                    delete this.pending[postId];
                 }
             });
+        }
+    };
+
+    // --- View Counter ---
+    const ViewCounterModule = {
+        init() {
+            if (!settings.viewCounter) return;
+            this.process(document);
         },
-        processAllPosts() {
+        process(container) {
+            if (!settings.viewCounter) return;
             // Comment page - single post
             if (window.location.pathname.includes('/comments/')) {
-                const postId = this.getPostId();
+                const urlMatch = window.location.pathname.match(/\/comments\/([a-z0-9]+)\//i);
+                const postId = urlMatch ? urlMatch[1] : null;
                 const selfPost = document.querySelector('.thing.self, .thing.link');
                 if (postId && selfPost && !selfPost.hasAttribute('data-rel-views')) {
                     selfPost.setAttribute('data-rel-views', '1');
-                    this.fetchPostData(postId, [selfPost]);
+                    PostDataCache.fetch(postId, (post) => this.insertViewCount(selfPost, post));
                 }
                 return;
             }
             // Listing page
-            document.querySelectorAll('.thing.link:not([data-rel-views])').forEach(post => {
-                post.setAttribute('data-rel-views', '1');
-                const postId = this.getPostId(post);
-                if (postId) this.fetchPostData(postId, [post]);
+            container.querySelectorAll('.thing.link:not([data-rel-views])').forEach(el => {
+                el.setAttribute('data-rel-views', '1');
+                const postId = el.dataset.fullname?.replace('t3_', '');
+                if (!postId) return;
+                PostDataCache.fetch(postId, (post) => this.insertViewCount(el, post));
             });
+        },
+        formatNumber(num) {
+            if (!num || num === 0) return '? views';
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M views';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K views';
+            return num + ' views';
+        },
+        insertViewCount(el, post) {
+            const tagline = el.querySelector('.tagline');
+            if (!tagline || tagline.querySelector('.rel-view-count')) return;
+            let views = null;
+            if (post) {
+                views = post.view_count || post.num_views || post.viewCount || null;
+                if (!views) {
+                    const score = post.score || 0;
+                    const ratio = post.upvote_ratio || 0.5;
+                    if (ratio > 0.5) views = Math.round(score / (2 * ratio - 1)) * 25;
+                }
+            }
+            const t = Themes.getTheme();
+            const span = document.createElement('span');
+            span.className = 'rel-view-count';
+            span.textContent = this.formatNumber(views);
+            span.style.cssText = `margin-right:6px;color:${t.fgMuted};font-size:0.85em;opacity:0.8;`;
+            const score = tagline.querySelector('.score');
+            if (score) score.after(span);
+            else tagline.prepend(span);
         }
     };
 
@@ -5141,8 +5172,36 @@
     const VoteEstimatorModule = {
         init() {
             if (!settings.voteEstimator) return;
-            this.addEstimatesToListing();
             this.addEstimatesToCommentPage();
+            this.process(document);
+        },
+        process(container) {
+            if (!settings.voteEstimator) return;
+            const linkListing = document.querySelector('.linklisting');
+            if (!linkListing) return;
+            container.querySelectorAll('.thing.link:not([data-rel-votes])').forEach(post => {
+                post.setAttribute('data-rel-votes', '1');
+                const postId = post.dataset.fullname?.replace('t3_', '');
+                if (!postId) return;
+                PostDataCache.fetch(postId, (pd) => {
+                    if (!pd) return;
+                    const score = pd.score || 0;
+                    const ratio = pd.upvote_ratio || 0.5;
+                    const pct = Math.round(ratio * 100);
+                    const upvotes = this.calcUpvotes(score, pct);
+                    if (upvotes === null) return;
+                    const downvotes = upvotes - score;
+                    const tagline = post.querySelector('.tagline');
+                    if (!tagline || tagline.querySelector('.rel-vote-est')) return;
+                    const t = Themes.getTheme();
+                    const span = document.createElement('span');
+                    span.className = 'rel-vote-est';
+                    span.style.cssText = 'font-size:0.85em;margin-left:4px;';
+                    span.innerHTML = `(<span style="color:${t.upvote || '#ff8b60'}">${this.addCommas(upvotes)}</span>|<span style="color:${t.downvote || '#9494ff'}">${this.addCommas(downvotes)}</span>|<span style="color:${t.success || '#50fa7b'}">${pct}%</span>)`;
+                    const scoreEl = tagline.querySelector('.score');
+                    if (scoreEl) scoreEl.after(span);
+                });
+            });
         },
         addCommas(n) {
             return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -5151,7 +5210,6 @@
             if (score === 0 || pct === 50) return null;
             return Math.round((pct / 100 * score) / (2 * (pct / 100) - 1));
         },
-        // On comment pages, enrich the .linkinfo score box
         addEstimatesToCommentPage() {
             const linkinfoScores = document.querySelectorAll('.linkinfo .score');
             linkinfoScores.forEach(scoreEl => {
@@ -5161,63 +5219,16 @@
                 const pctMatch = scoreEl.textContent.match(/(\d{1,3})\s?%/);
                 const pct = pctMatch ? parseInt(pctMatch[1], 10) : 0;
                 if (points === 50 && pct === 50) return;
-
                 const upvotes = this.calcUpvotes(points, pct);
                 if (upvotes === null) return;
                 const downvotes = upvotes - points;
                 const total = upvotes + downvotes;
                 const t = Themes.getTheme();
-
                 scoreEl.insertAdjacentHTML('afterend', `
                     <span style="font-size:80%;color:${t.upvote || '#ff8b60'};margin-left:5px;">${this.addCommas(upvotes)} upvotes</span>
                     <span style="font-size:80%;color:${t.downvote || '#9494ff'};margin-left:5px;">${this.addCommas(downvotes)} downvotes</span>
-                    <span style="font-size:80%;color:${t.muted};margin-left:5px;">${this.addCommas(total)} total</span>
+                    <span style="font-size:80%;color:${t.fgMuted};margin-left:5px;">${this.addCommas(total)} total</span>
                 `);
-            });
-        },
-        // On listing pages, add (up|down|%) to each post tagline
-        addEstimatesToListing() {
-            const linkListing = document.querySelector('.linklisting');
-            if (!linkListing) return;
-
-            document.querySelectorAll('.thing.link:not([data-rel-votes])').forEach(post => {
-                post.setAttribute('data-rel-votes', '1');
-                const postId = post.dataset.fullname?.replace('t3_', '');
-                if (!postId) return;
-
-                const commentsLink = post.querySelector('a.comments');
-                if (!commentsLink) return;
-
-                // Fetch the post's JSON to get score + ratio
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url: `https://www.reddit.com/by_id/t3_${postId}.json`,
-                    headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-                    onload: (response) => {
-                        try {
-                            const data = JSON.parse(response.responseText);
-                            const pd = data.data.children[0].data;
-                            const score = pd.score || 0;
-                            const ratio = pd.upvote_ratio || 0.5;
-                            const pct = Math.round(ratio * 100);
-                            const upvotes = this.calcUpvotes(score, pct);
-                            if (upvotes === null) return;
-                            const downvotes = upvotes - score;
-
-                            const tagline = post.querySelector('.tagline');
-                            if (!tagline || tagline.querySelector('.rel-vote-est')) return;
-
-                            const t = Themes.getTheme();
-                            const container = document.createElement('span');
-                            container.className = 'rel-vote-est';
-                            container.style.cssText = 'font-size:0.85em;margin-left:4px;';
-                            container.innerHTML = `(<span style="color:${t.upvote || '#ff8b60'}">${this.addCommas(upvotes)}</span>|<span style="color:${t.downvote || '#9494ff'}">${this.addCommas(downvotes)}</span>|<span style="color:${t.success || '#50fa7b'}">${pct}%</span>)`;
-                            // Insert after the score element
-                            const scoreEl = tagline.querySelector('.score');
-                            if (scoreEl) scoreEl.after(container);
-                        } catch (e) { /* silently fail */ }
-                    }
-                });
             });
         }
     };
@@ -5305,7 +5316,6 @@
     };
 
     function initModules() {
-        console.log(`REL v${VERSION} | adBlocker: ${settings.adBlocker} | darkMode: ${settings.darkMode} | theme: ${settings.theme}`);
         // Apply body classes
         DarkModeModule.init();
 
@@ -5558,38 +5568,22 @@
             const visibleThings = document.querySelectorAll('#siteTable .thing.link:not([style*="display: none"])');
 
             if (allThings.length > 0 && visibleThings.length === 0) {
-                console.error('REL SAFETY: All posts hidden via inline styles! Restoring...');
-                allThings.forEach(t => { t.style.display = ''; t.removeAttribute('data-rel-hidden'); });
+                console.warn('REL: All posts hidden via inline styles - restoring visibility');
+                allThings.forEach(el => { el.style.display = ''; el.removeAttribute('data-rel-hidden'); });
             } else if (allThings.length > 0) {
-                // Check if CSS is hiding posts (no inline style but computed display is none)
                 let cssHiddenCount = 0;
-                allThings.forEach(t => {
-                    const computed = window.getComputedStyle(t);
-                    if (computed.display === 'none') {
-                        cssHiddenCount++;
-                        if (cssHiddenCount <= 3) {
-                            console.error('REL SAFETY: Post hidden by CSS rule:', t.className, t.getAttribute('data-fullname'));
-                            // Log which classes/attributes it has that might match ad selectors
-                            console.error('  Classes:', t.className);
-                            console.error('  data-promoted:', t.getAttribute('data-promoted'));
-                            console.error('  data-type:', t.getAttribute('data-type'));
-                        }
-                    }
+                allThings.forEach(el => {
+                    if (window.getComputedStyle(el).display === 'none') cssHiddenCount++;
                 });
                 if (cssHiddenCount > 0 && cssHiddenCount >= allThings.length * 0.9) {
-                    console.error(`REL SAFETY: ${cssHiddenCount}/${allThings.length} posts hidden by CSS! Removing ad blocker styles...`);
-                    // Nuclear option: remove ALL ad blocker style elements
+                    console.warn(`REL: ${cssHiddenCount}/${allThings.length} posts hidden by CSS - removing ad blocker styles`);
                     document.querySelectorAll('style').forEach(s => {
                         if (s.textContent.includes('.thing.promoted') || s.textContent.includes('REL Ad Blocker')) {
                             s.remove();
-                            console.log('REL SAFETY: Removed ad blocker <style> element');
                         }
                     });
                 }
-            } else if (allThings.length === 0 && document.querySelector('#siteTable')) {
-                console.warn('REL SAFETY: No .thing elements found in #siteTable.');
             }
-            console.log(`REL Debug: ${allThings.length} posts in siteTable, ${visibleThings.length} visible`);
         }, 1000);
     }
 
