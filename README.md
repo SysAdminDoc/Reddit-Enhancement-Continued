@@ -1,4 +1,4 @@
-# Reddit Enhancement Lite
+# Reddit Enhancement Continued
 
 A comprehensive enhancement suite for [old.reddit.com](https://old.reddit.com) — themes, media, comments, navigation, filtering, and more. Built as a single-file userscript with zero dependencies.
 
