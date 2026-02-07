@@ -15,7 +15,7 @@ A comprehensive enhancement suite for [old.reddit.com](https://old.reddit.com) �
    - [Violentmonkey](https://violentmonkey.github.io/) (Chrome, Firefox)
    - [Greasemonkey](https://www.greasespot.net/) (Firefox)
 
-2. **[Click here to install Reddit Enhancement Lite](Reddit_Enhancement_Lite.user.js)** (or create a new userscript and paste the contents)
+2. **[Click here to install Reddit Enhancement Continued](https://github.com/SysAdminDoc/Reddit-Enhancement-Continued/raw/refs/heads/main/RedditEnhancementContinued.user.js)** (or create a new userscript and paste the contents)
 
 3. Visit [old.reddit.com](https://old.reddit.com) — the script loads automatically.
 
@@ -139,7 +139,7 @@ Changes auto-save. Some settings (like theme switching and button hiding) apply 
 
 ## How It Works
 
-Reddit Enhancement Lite is a single `~5,600` line userscript that runs at `document-start` for zero-flicker theme application. Key architectural decisions:
+Reddit Enhancement Continued is a single `~5,600` line userscript that runs at `document-start` for zero-flicker theme application. Key architectural decisions:
 
 - **Zero jQuery dependency** — Old Reddit's jQuery bundle has broken plugins (`$.fn.thing`, slideUp, etc.). REL intercepts all click events natively via `MutationObserver` + capturing event listeners, handling replies, votes, dropdowns, and comment collapsing without touching Reddit's broken JavaScript.
 - **Pure CSS theming** — Themes are applied via `GM_addStyle` with `!important` overrides, covering every Reddit element including subreddit custom stylesheets.
