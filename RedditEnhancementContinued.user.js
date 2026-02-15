@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Enhancement Continued
 // @namespace    https://github.com/SysAdminDoc/Reddit-Enhancement-Continued
-// @version      2.7.6
+// @version      2.8.1
 // @description  A comprehensive enhancement suite for old.reddit.com - themes, navigation, filtering, media, and more
 // @author       Reddit Enhancement Continued
 // @match        https://old.reddit.com/*
@@ -46,7 +46,7 @@
     // =========================================================================
     // CONFIGURATION & STORAGE
     // =========================================================================
-    const VERSION = '2.7.5';
+    const VERSION = '2.8.1';
 
     const CONFIG = {
         version: VERSION,
@@ -359,6 +359,7 @@
             if (settings.collapseChildComments) CollapseChildCommentsModule.process(container);
             if (settings.commentHighlighting) CommentHighlightingModule.process(container);
             if (settings.hideAutoModerator) HideAutoModeratorModule.process(container);
+            IgnoredUsersModule.process(container);
             if (settings.embedYouTube) YouTubeEmbedModule.process(container);
             if (settings.embedRedditPreviews) RedditPreviewModule.process(container);
             if (settings.inlineImageFix) InlineImageFixModule.process(container);
@@ -1443,6 +1444,7 @@
             if (!settings.darkMode || settings.theme === 'light') return '';
             return `
                 /* Themed component overrides */
+                .rel-settings-header .rel-version { color: ${t.fgDim}; }
                 .rel-settings-panel { background: ${t.bgLight}; color: ${t.fg}; }
                 .rel-settings-header { border-color: ${t.border}; }
                 .rel-settings-header h2 { color: ${t.fg}; }
@@ -2567,6 +2569,65 @@
             });
             section.appendChild(copyBtn);
 
+            // User Tags export/import
+            const tagLabel = Utils.createElement('h3', {
+                textContent: 'User Tags',
+                style: { margin: '14px 0 6px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }
+            });
+            section.appendChild(tagLabel);
+
+            const tagRow = Utils.createElement('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } });
+
+            const exportTagsBtn = Utils.createElement('button', {
+                className: 'rel-btn-small rel-btn-secondary', textContent: 'Export Tags',
+                onClick: () => {
+                    const data = JSON.stringify(userTags, null, 2);
+                    const blob = new Blob([data], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `rel-user-tags-${new Date().toISOString().slice(0,10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    Utils.notify(`Exported ${Object.keys(userTags).length} tags`, 'success');
+                }
+            });
+
+            const importTagsBtn = Utils.createElement('button', {
+                className: 'rel-btn-small rel-btn-secondary', textContent: 'Import Tags',
+                onClick: () => {
+                    const input = document.createElement('input');
+                    input.type = 'file'; input.accept = '.json';
+                    input.addEventListener('change', () => {
+                        const file = input.files[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            try {
+                                const imported = JSON.parse(reader.result);
+                                if (typeof imported !== 'object' || Array.isArray(imported)) throw new Error('Invalid format');
+                                let count = 0;
+                                Object.entries(imported).forEach(([user, tag]) => {
+                                    if (tag && typeof tag === 'object' && tag.text) {
+                                        userTags[user] = tag;
+                                        count++;
+                                    }
+                                });
+                                saveUserTags();
+                                Utils.notify(`Imported ${count} tags. Reload to see changes.`, 'success');
+                            } catch (e) {
+                                Utils.notify('Invalid tags file', 'error');
+                            }
+                        };
+                        reader.readAsText(file);
+                    });
+                    input.click();
+                }
+            });
+
+            tagRow.appendChild(exportTagsBtn);
+            tagRow.appendChild(importTagsBtn);
+            section.appendChild(tagRow);
+
             return section;
         },
 
@@ -2651,11 +2712,26 @@
     // COLLAPSIBLE SIDEBAR MODULE
     // =========================================================================
     const CollapsibleSidebarModule = {
+        _storageKey: 'rel_sidebar_hidden',
+
+        _applyState(side, btn, hidden) {
+            side.style.display = hidden ? 'none' : '';
+            btn.textContent = hidden ? '\u25B6 Sidebar' : '\u25C0 Sidebar';
+            const content = document.querySelector('.content[role="main"]');
+            if (content) content.style.marginRight = hidden ? '0' : '';
+            Storage.set(this._storageKey, hidden);
+        },
+
         init() {
             if (!settings.collapsibleSidebar) return;
             const side = document.querySelector('.side');
             if (!side) return;
 
+            // Persisted state wins; fall back to hideSidebar default
+            const savedState = Storage.get(this._storageKey, null);
+            const startHidden = savedState !== null ? savedState : !!settings.hideSidebar;
+
+            const self = this;
             const btn = Utils.createElement('div', {
                 style: {
                     position: 'fixed', right: '0', top: '50%', transform: 'translateY(-50%)',
@@ -2665,11 +2741,8 @@
                 },
                 textContent: '\u25C0 Sidebar',
                 onClick: () => {
-                    const hidden = side.style.display === 'none';
-                    side.style.display = hidden ? '' : 'none';
-                    btn.textContent = hidden ? '\u25C0 Sidebar' : '\u25B6 Sidebar';
-                    const content = document.querySelector('.content[role="main"]');
-                    if (content) content.style.marginRight = hidden ? '' : '0';
+                    const isHidden = side.style.display === 'none';
+                    self._applyState(side, btn, !isHidden);
                 }
             });
 
@@ -2686,11 +2759,9 @@
 
             document.body.appendChild(btn);
 
-            if (settings.hideSidebar) {
-                side.style.display = 'none';
-                btn.textContent = '\u25B6 Sidebar';
-                const content = document.querySelector('.content[role="main"]');
-                if (content) content.style.marginRight = '0';
+            // Apply initial state
+            if (startHidden) {
+                this._applyState(side, btn, true);
             }
         }
     };
@@ -2760,6 +2831,10 @@
             popup.style.left = Math.min(event.clientX, window.innerWidth - 300) + 'px';
             popup.style.top = Math.min(event.clientY, window.innerHeight - 200) + 'px';
 
+            // AbortController for clean listener cleanup
+            const ac = new AbortController();
+            const closePopup = () => { popup.remove(); ac.abort(); };
+
             popup.querySelector('.rel-tag-save').addEventListener('click', () => {
                 const text = popup.querySelector('.rel-tag-text').value.trim();
                 const color = popup.querySelector('.rel-tag-color').value;
@@ -2768,32 +2843,31 @@
                     saveUserTags();
                     this.updateAllTags(username);
                 }
-                popup.remove();
+                closePopup();
             });
 
             popup.querySelector('.rel-tag-remove').addEventListener('click', () => {
                 delete userTags[username];
                 saveUserTags();
                 this.updateAllTags(username);
-                popup.remove();
+                closePopup();
             });
 
-            popup.querySelector('.rel-tag-cancel').addEventListener('click', () => popup.remove());
+            popup.querySelector('.rel-tag-cancel').addEventListener('click', closePopup);
 
             const textInput = popup.querySelector('.rel-tag-text');
             setTimeout(() => textInput.focus(), 50);
             textInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') popup.querySelector('.rel-tag-save').click();
-                if (e.key === 'Escape') popup.remove();
+                if (e.key === 'Escape') closePopup();
             });
 
             document.body.appendChild(popup);
-            document.addEventListener('click', function handler(e) {
+            document.addEventListener('click', (e) => {
                 if (!popup.contains(e.target) && !e.target.classList.contains('rel-user-tag')) {
-                    popup.remove();
-                    document.removeEventListener('click', handler);
+                    closePopup();
                 }
-            }, { once: false });
+            }, { signal: ac.signal });
         },
 
         updateAllTags(username) {
@@ -2849,20 +2923,23 @@
                 const entry = thing.querySelector('.entry');
                 if (!entry) return;
 
-                // Skip if Reddit already has an expando button
+                // Skip if Reddit already has a working expando
                 const existingExpando = thing.querySelector('.expando-button');
                 if (existingExpando && !existingExpando.classList.contains('collapsed')) return;
 
                 const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)(\?.*)?$/i.test(url) ||
                                 Object.keys(this.imageHosts).some(h => url.includes(h));
                 const isVideo = this.videoHosts.some(h => url.includes(h));
+                const isGallery = url.includes('/gallery/') || thing.classList.contains('gallery');
 
-                if (isImage || isVideo) {
+                if (isImage || isVideo || isGallery) {
+                    const label = isGallery ? '[+gallery]' : (isImage ? '[+img]' : '[+vid]');
+                    const type = isGallery ? 'gallery' : (isImage ? 'image' : 'video');
                     const expandBtn = Utils.createElement('span', {
                         className: 'rel-button',
-                        textContent: isImage ? '[+img]' : '[+vid]',
+                        textContent: label,
                         style: { marginLeft: '4px' },
-                        onClick: () => this.toggleExpand(thing, url, isImage, expandBtn)
+                        onClick: () => this.toggleExpand(thing, url, type, expandBtn)
                     });
                     const buttons = entry.querySelector('.flat-list.buttons');
                     if (buttons) buttons.prepend(expandBtn);
@@ -2870,11 +2947,11 @@
             });
         },
 
-        toggleExpand(thing, url, isImage, btn) {
+        toggleExpand(thing, url, type, btn) {
             const existing = thing.querySelector('.rel-media-expando');
             if (existing) {
                 existing.remove();
-                btn.textContent = isImage ? '[+img]' : '[+vid]';
+                btn.textContent = type === 'gallery' ? '[+gallery]' : (type === 'image' ? '[+img]' : '[+vid]');
                 return;
             }
 
@@ -2883,7 +2960,7 @@
                 style: { margin: '8px 0', maxWidth: '100%', overflow: 'hidden' }
             });
 
-            if (isImage) {
+            if (type === 'image') {
                 let imgUrl = url;
                 for (const [host, resolver] of Object.entries(this.imageHosts)) {
                     if (url.includes(host)) { imgUrl = resolver(url) || url; break; }
@@ -2913,13 +2990,105 @@
                     document.addEventListener('mouseup', onUp);
                 });
                 container.appendChild(img);
-            } else {
-                container.innerHTML = `<video controls style="max-width:100%;max-height:500px;border-radius:4px;"><source src="${Utils.escapeHTML(url)}">Your browser does not support video.</video>`;
+            } else if (type === 'video') {
+                // v.redd.it uses DASH - embed via Reddit's own player
+                const fullname = thing.getAttribute('data-fullname') || '';
+                if (url.includes('v.redd.it') && fullname) {
+                    const postId = fullname.replace('t3_', '');
+                    const iframe = document.createElement('iframe');
+                    iframe.src = `https://www.redditmedia.com/${postId}?ref_source=embed&ref=share&embed=true&theme=dark`;
+                    iframe.style.cssText = 'width:100%;max-width:640px;height:360px;border:none;border-radius:6px;';
+                    iframe.setAttribute('allowfullscreen', '');
+                    iframe.setAttribute('loading', 'lazy');
+                    container.appendChild(iframe);
+                } else {
+                    container.innerHTML = `<video controls style="max-width:100%;max-height:500px;border-radius:4px;"><source src="${Utils.escapeHTML(url)}">Your browser does not support video.</video>`;
+                }
+            } else if (type === 'gallery') {
+                this.loadGallery(thing, container);
             }
 
             const entry = thing.querySelector('.entry');
             entry.appendChild(container);
-            btn.textContent = isImage ? '[-img]' : '[-vid]';
+            btn.textContent = type === 'gallery' ? '[-gallery]' : (type === 'image' ? '[-img]' : '[-vid]');
+        },
+
+        async loadGallery(thing, container) {
+            const t = Themes.getTheme();
+            container.innerHTML = `<div style="padding:10px;color:${t.fgDim};font-size:12px;">Loading gallery...</div>`;
+            try {
+                const fullname = thing.getAttribute('data-fullname') || '';
+                const postId = fullname.replace('t3_', '');
+                if (!postId) throw new Error('No post ID');
+
+                const resp = await fetch(`https://old.reddit.com/by_id/${fullname}.json`);
+                const data = await resp.json();
+                const post = data?.data?.children?.[0]?.data;
+                if (!post) throw new Error('No post data');
+
+                const galleryData = post.gallery_data?.items || [];
+                const mediaMetadata = post.media_metadata || {};
+
+                if (galleryData.length === 0) throw new Error('No gallery items');
+
+                const images = galleryData.map(item => {
+                    const meta = mediaMetadata[item.media_id];
+                    if (!meta) return null;
+                    // Get the highest resolution source
+                    const src = meta.s;
+                    if (!src) return null;
+                    return {
+                        url: (src.u || src.gif || '').replace(/&amp;/g, '&'),
+                        width: src.x,
+                        height: src.y,
+                        caption: item.caption || ''
+                    };
+                }).filter(Boolean);
+
+                if (images.length === 0) throw new Error('No images found');
+
+                container.innerHTML = '';
+                let currentIdx = 0;
+
+                const viewer = document.createElement('div');
+                viewer.style.cssText = 'position:relative;text-align:center;';
+
+                const img = document.createElement('img');
+                img.src = images[0].url;
+                img.style.cssText = 'max-width:100%;max-height:600px;border-radius:6px;cursor:pointer;';
+                img.addEventListener('click', () => window.open(images[currentIdx].url, '_blank'));
+                viewer.appendChild(img);
+
+                const counter = document.createElement('div');
+                counter.style.cssText = `font-size:12px;color:${t.fgMuted};padding:6px 0;display:flex;align-items:center;justify-content:center;gap:12px;`;
+
+                const updateView = () => {
+                    img.src = images[currentIdx].url;
+                    label.textContent = `${currentIdx + 1} / ${images.length}${images[currentIdx].caption ? ' - ' + images[currentIdx].caption : ''}`;
+                };
+
+                const prevBtn = document.createElement('button');
+                prevBtn.textContent = '\u25C0 Prev';
+                prevBtn.style.cssText = `padding:4px 10px;border-radius:4px;cursor:pointer;border:1px solid ${t.border};background:${t.surface};color:${t.fg};font-size:12px;`;
+                prevBtn.addEventListener('click', () => { currentIdx = (currentIdx - 1 + images.length) % images.length; updateView(); });
+
+                const label = document.createElement('span');
+                label.textContent = `1 / ${images.length}`;
+
+                const nextBtn = document.createElement('button');
+                nextBtn.textContent = 'Next \u25B6';
+                nextBtn.style.cssText = prevBtn.style.cssText;
+                nextBtn.addEventListener('click', () => { currentIdx = (currentIdx + 1) % images.length; updateView(); });
+
+                counter.appendChild(prevBtn);
+                counter.appendChild(label);
+                counter.appendChild(nextBtn);
+
+                container.appendChild(viewer);
+                container.appendChild(counter);
+            } catch (e) {
+                container.innerHTML = `<div style="padding:8px;color:${t.fgDim};font-size:12px;">Gallery could not be loaded. <a href="${Utils.escapeHTML(thing.getAttribute('data-url') || '#')}" target="_blank" style="color:${t.accent};">Open on Reddit</a></div>`;
+            }
         }
     };
 
@@ -2986,7 +3155,8 @@
                 const nextBtn = doc.querySelector('.next-button a');
                 this.nextPageUrl = nextBtn ? nextBtn.href : null;
 
-                Utils.processNewContent(sitetable);
+                // Only process newly added posts, not the entire sitetable
+                newPosts.forEach(post => Utils.processNewContent(post));
             } catch (e) {
                 loader.textContent = 'Error loading next page. Click to retry.';
                 loader.style.cursor = 'pointer';
@@ -3203,7 +3373,17 @@
                     const intensity = Math.max(0.05, Math.min(0.2, 0.2 * (1 - age / maxAge)));
                     const color = settings.darkMode ? t.accent : '#0079d3';
                     comment.style.borderLeft = `3px solid ${color}`;
-                    comment.style.backgroundColor = color.replace(')', `,${intensity})`).replace('rgb', 'rgba');
+                    // Convert hex or rgb to rgba
+                    let rgba;
+                    if (color.startsWith('#')) {
+                        const r = parseInt(color.slice(1,3), 16), g = parseInt(color.slice(3,5), 16), b = parseInt(color.slice(5,7), 16);
+                        rgba = `rgba(${r},${g},${b},${intensity})`;
+                    } else if (color.startsWith('rgb')) {
+                        rgba = color.replace(')', `,${intensity})`).replace('rgb(', 'rgba(');
+                    } else {
+                        rgba = color;
+                    }
+                    comment.style.backgroundColor = rgba;
                 }
             });
 
@@ -3224,15 +3404,23 @@
     const KeyboardNavModule = {
         currentIndex: -1,
         things: [],
+        _dirty: true,
 
         init() {
             if (!settings.keyboardNav) return;
             this.updateThings();
             document.addEventListener('keydown', (e) => this.handleKey(e));
+            // Invalidate cache when DOM changes (NER pages, expand thread, etc)
+            new MutationObserver(() => { this._dirty = true; }).observe(
+                document.querySelector('.sitetable') || document.body,
+                { childList: true, subtree: true }
+            );
         },
 
         updateThings() {
+            if (!this._dirty) return;
             this.things = Array.from(document.querySelectorAll('.thing.link, .thing.comment'));
+            this._dirty = false;
         },
 
         handleKey(e) {
@@ -3630,6 +3818,73 @@
     };
 
     // =========================================================================
+    // IGNORED USERS MODULE
+    // =========================================================================
+    const IgnoredUsersModule = {
+        init() {
+            if (!ignoredUsers.length) return;
+            this.process(document);
+        },
+
+        process(container) {
+            if (!ignoredUsers.length) return;
+            const comments = container.querySelectorAll('.comment:not([data-rel-ignored])');
+            const t = Themes.getTheme();
+            comments.forEach(comment => {
+                comment.setAttribute('data-rel-ignored', '1');
+                const authorName = (comment.getAttribute('data-author') ||
+                    comment.querySelector('.author')?.textContent || '').toLowerCase();
+                if (!authorName || !ignoredUsers.some(u => u.toLowerCase() === authorName)) return;
+
+                comment.classList.add('rel-ignored-user');
+                const entry = comment.querySelector(':scope > .entry');
+                const child = comment.querySelector(':scope > .child');
+                if (entry) {
+                    // Hide comment body and children
+                    const body = entry.querySelector('.usertext-body') || entry.querySelector('form > .usertext-body');
+                    if (body) body.style.display = 'none';
+                    if (child) child.style.display = 'none';
+                    const buttons = entry.querySelector('.flat-list.buttons');
+                    if (buttons) buttons.style.display = 'none';
+                    entry.style.opacity = '0.4';
+                    entry.style.padding = '4px 10px';
+
+                    const tagline = entry.querySelector('.tagline');
+                    if (tagline && !tagline.querySelector('.rel-ignored-label')) {
+                        const label = document.createElement('span');
+                        label.className = 'rel-ignored-label';
+                        label.textContent = '[ignored user - click to show]';
+                        label.style.cssText = `font-size:11px;color:${t.fgDim};margin-left:6px;cursor:pointer;font-style:italic;opacity:0.7;`;
+                        label.addEventListener('mouseenter', () => { label.style.opacity = '1'; label.style.color = t.accent; });
+                        label.addEventListener('mouseleave', () => { label.style.opacity = '0.7'; label.style.color = t.fgDim; });
+                        label.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            const isHidden = comment.classList.contains('rel-ignored-user');
+                            comment.classList.toggle('rel-ignored-user');
+                            if (isHidden) {
+                                if (body) body.style.display = '';
+                                if (child) child.style.display = '';
+                                if (buttons) buttons.style.display = '';
+                                entry.style.opacity = '';
+                                entry.style.padding = '';
+                                label.textContent = '[click to hide]';
+                            } else {
+                                if (body) body.style.display = 'none';
+                                if (child) child.style.display = 'none';
+                                if (buttons) buttons.style.display = 'none';
+                                entry.style.opacity = '0.4';
+                                entry.style.padding = '4px 10px';
+                                label.textContent = '[ignored user - click to show]';
+                            }
+                        });
+                        tagline.appendChild(label);
+                    }
+                }
+            });
+        }
+    };
+
+    // =========================================================================
     // YOUTUBE EMBED MODULE
     // =========================================================================
     const YouTubeEmbedModule = {
@@ -3782,7 +4037,7 @@
 
                 // Check if link text is just a URL or image placeholder
                 const text = link.textContent.trim();
-                const isPlaceholder = /^(https?:\/\/|image|img|\[img\]|photo|pic)/i.test(text) || text === href;
+                const isPlaceholder = /^(<?\s*)?(https?:\/\/|image|img|\[img\]|photo|pic)/i.test(text) || text === href;
                 if (!isPlaceholder && !text.match(/\.(jpg|png|gif|webp)/i)) return;
 
                 const container = Utils.createElement('div', {
@@ -3898,6 +4153,230 @@
     // =========================================================================
     // COMMENT NAVIGATOR MODULE
     // =========================================================================
+    const CommentNavigatorModule = {
+        currentIndex: -1,
+        mode: 'top', // 'top', 'new', 'op'
+        comments: [],
+
+        init() {
+            if (!Utils.isCommentsPage()) return;
+            this.buildUI();
+        },
+
+        buildUI() {
+            const t = Themes.getTheme();
+            const isDark = settings.darkMode && settings.theme !== 'light';
+
+            const nav = document.createElement('div');
+            nav.className = 'rel-comment-nav';
+            nav.style.cssText = `position:fixed;right:10px;bottom:80px;z-index:99996;display:flex;flex-direction:column;gap:4px;opacity:0;pointer-events:none;transition:opacity 0.3s;`;
+
+            const modes = [
+                { id: 'top', label: 'Top', title: 'Navigate top-level comments' },
+                { id: 'new', label: 'New', title: 'Navigate new/highlighted comments' },
+                { id: 'op', label: 'OP', title: 'Navigate OP comments' }
+            ];
+
+            const modeRow = document.createElement('div');
+            modeRow.style.cssText = 'display:flex;gap:2px;border-radius:6px;overflow:hidden;';
+            modes.forEach(m => {
+                const btn = document.createElement('button');
+                btn.textContent = m.label;
+                btn.title = m.title;
+                btn.dataset.mode = m.id;
+                btn.style.cssText = `padding:4px 8px;font-size:10px;font-weight:600;cursor:pointer;border:none;background:${m.id === this.mode ? t.accent : t.surface};color:${m.id === this.mode ? t.bg : t.fg};transition:all 0.15s;`;
+                btn.addEventListener('click', () => {
+                    this.mode = m.id;
+                    this.currentIndex = -1;
+                    this.updateComments();
+                    modeRow.querySelectorAll('button').forEach(b => {
+                        b.style.background = b.dataset.mode === m.id ? t.accent : t.surface;
+                        b.style.color = b.dataset.mode === m.id ? t.bg : t.fg;
+                    });
+                    countLabel.textContent = `${this.comments.length} ${m.label.toLowerCase()}`;
+                });
+                modeRow.appendChild(btn);
+            });
+            nav.appendChild(modeRow);
+
+            const countLabel = document.createElement('div');
+            countLabel.style.cssText = `font-size:10px;text-align:center;color:${t.fgDim};padding:2px;`;
+            nav.appendChild(countLabel);
+
+            const btnRow = document.createElement('div');
+            btnRow.style.cssText = 'display:flex;gap:4px;';
+
+            const prevBtn = document.createElement('button');
+            prevBtn.innerHTML = '\u25B2';
+            prevBtn.title = 'Previous comment';
+            prevBtn.style.cssText = `flex:1;padding:6px;border-radius:6px;cursor:pointer;border:1px solid ${t.border};background:${t.surface};color:${t.fg};font-size:12px;`;
+            prevBtn.addEventListener('click', () => this.navigate(-1, countLabel));
+
+            const nextBtn = document.createElement('button');
+            nextBtn.innerHTML = '\u25BC';
+            nextBtn.title = 'Next comment';
+            nextBtn.style.cssText = prevBtn.style.cssText;
+            nextBtn.addEventListener('click', () => this.navigate(1, countLabel));
+
+            btnRow.appendChild(prevBtn);
+            btnRow.appendChild(nextBtn);
+            nav.appendChild(btnRow);
+
+            document.body.appendChild(nav);
+
+            // Show/hide based on scroll
+            let visible = false;
+            window.addEventListener('scroll', Utils.throttle(() => {
+                const shouldShow = window.scrollY > 300;
+                if (shouldShow !== visible) {
+                    nav.style.opacity = shouldShow ? '1' : '0';
+                    nav.style.pointerEvents = shouldShow ? 'auto' : 'none';
+                    visible = shouldShow;
+                }
+            }, 200));
+
+            this.updateComments();
+            countLabel.textContent = `${this.comments.length} top`;
+        },
+
+        updateComments() {
+            switch (this.mode) {
+                case 'top':
+                    this.comments = Array.from(document.querySelectorAll('.commentarea > .sitetable.nestedlisting > .comment'));
+                    break;
+                case 'new':
+                    this.comments = Array.from(document.querySelectorAll('.comment[style*="border-left: 3px"]'));
+                    break;
+                case 'op':
+                    this.comments = Array.from(document.querySelectorAll('.comment:has(.author.submitter)'));
+                    break;
+            }
+        },
+
+        navigate(direction, label) {
+            this.updateComments();
+            if (this.comments.length === 0) return;
+            this.currentIndex = Math.max(0, Math.min(this.comments.length - 1, this.currentIndex + direction));
+            const comment = this.comments[this.currentIndex];
+            if (comment) {
+                comment.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Brief highlight flash
+                const entry = comment.querySelector(':scope > .entry');
+                if (entry) {
+                    const t = Themes.getTheme();
+                    entry.style.outline = `2px solid ${t.accent}`;
+                    setTimeout(() => { entry.style.outline = ''; }, 1500);
+                }
+            }
+            if (label) label.textContent = `${this.currentIndex + 1}/${this.comments.length}`;
+        }
+    };
+
+    // =========================================================================
+    // COMMENT SEARCH MODULE
+    // =========================================================================
+    const CommentSearchModule = {
+        init() {
+            if (!Utils.isCommentsPage()) return;
+            this.addSearchButton();
+        },
+
+        addSearchButton() {
+            const menuarea = document.querySelector('.commentarea .menuarea');
+            if (!menuarea) return;
+            const t = Themes.getTheme();
+            const btn = document.createElement('span');
+            btn.className = 'rel-comment-search-btn';
+            btn.textContent = '\uD83D\uDD0D Search Comments';
+            btn.title = 'Search within comments';
+            btn.style.cssText = `cursor:pointer;font-size:12px;color:${t.accent};margin-left:10px;font-weight:500;`;
+            btn.addEventListener('click', () => this.showSearchBar());
+            menuarea.appendChild(btn);
+        },
+
+        showSearchBar() {
+            let existing = document.querySelector('.rel-comment-search-bar');
+            if (existing) { existing.remove(); return; }
+
+            const t = Themes.getTheme();
+            const bar = document.createElement('div');
+            bar.className = 'rel-comment-search-bar';
+            bar.style.cssText = `position:sticky;top:0;z-index:99998;padding:8px 14px;display:flex;align-items:center;gap:8px;background:${t.bgLight};border-bottom:1px solid ${t.border};box-shadow:0 2px 8px ${t.shadow};`;
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.placeholder = 'Search comments...';
+            input.style.cssText = `flex:1;padding:6px 10px;border-radius:6px;border:1px solid ${t.border};background:${t.inputBg};color:${t.inputFg};font-size:13px;font-family:inherit;`;
+
+            const countSpan = document.createElement('span');
+            countSpan.style.cssText = `font-size:12px;color:${t.fgDim};white-space:nowrap;min-width:60px;`;
+
+            const closeBtn = document.createElement('button');
+            closeBtn.textContent = '\u2715';
+            closeBtn.style.cssText = `background:none;border:none;color:${t.fgDim};font-size:16px;cursor:pointer;padding:4px;`;
+            closeBtn.addEventListener('click', () => { this.clearHighlights(); bar.remove(); });
+
+            bar.appendChild(input);
+            bar.appendChild(countSpan);
+            bar.appendChild(closeBtn);
+
+            const commentarea = document.querySelector('.commentarea');
+            if (commentarea) commentarea.insertBefore(bar, commentarea.firstChild);
+
+            input.focus();
+            let currentMatch = -1;
+            let matches = [];
+
+            const doSearch = () => {
+                this.clearHighlights();
+                const query = input.value.trim().toLowerCase();
+                if (!query || query.length < 2) { countSpan.textContent = ''; matches = []; return; }
+
+                matches = [];
+                document.querySelectorAll('.comment .md').forEach(md => {
+                    if (md.textContent.toLowerCase().includes(query)) {
+                        matches.push(md);
+                        md.classList.add('rel-search-match');
+                        md.style.outline = `2px solid ${t.accent}`;
+                        md.style.outlineOffset = '2px';
+                        md.style.borderRadius = '4px';
+                        // Ensure parent comments are uncollapsed
+                        let parent = md.closest('.comment');
+                        while (parent) {
+                            if (parent.classList.contains('collapsed')) {
+                                parent.classList.remove('collapsed');
+                                parent.classList.add('noncollapsed');
+                            }
+                            const childDiv = parent.closest('.child');
+                            if (childDiv && childDiv.style.display === 'none') childDiv.style.display = '';
+                            parent = childDiv?.closest('.comment');
+                        }
+                    }
+                });
+                countSpan.textContent = matches.length ? `${matches.length} found` : 'No results';
+                currentMatch = -1;
+            };
+
+            input.addEventListener('input', Utils.debounce(doSearch, 250));
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') { this.clearHighlights(); bar.remove(); return; }
+                if (e.key === 'Enter' && matches.length > 0) {
+                    currentMatch = (currentMatch + 1) % matches.length;
+                    matches[currentMatch].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    countSpan.textContent = `${currentMatch + 1}/${matches.length}`;
+                }
+            });
+        },
+
+        clearHighlights() {
+            document.querySelectorAll('.rel-search-match').forEach(el => {
+                el.classList.remove('rel-search-match');
+                el.style.outline = '';
+                el.style.outlineOffset = '';
+            });
+        }
+    };
+
     // =========================================================================
     // FORMATTING TOOLBAR MODULE
     // =========================================================================
@@ -4178,27 +4657,23 @@
                         e.stopPropagation();
                         expandBtn.textContent = '[loading...]';
                         try {
-                            const resp = await fetch(link.href + '.json');
-                            const data = await resp.json();
-                            // Get the comments from the response
-                            const comments = data[1]?.data?.children;
-                            if (comments && comments.length > 0) {
-                                const resp2 = await fetch(link.href);
-                                const html = await resp2.text();
-                                const parser = new DOMParser();
-                                const doc = parser.parseFromString(html, 'text/html');
-                                const newComments = doc.querySelector('.commentarea .sitetable');
-                                if (newComments) {
-                                    const parent = link.closest('.morecomments') || link.closest('.child');
-                                    if (parent) {
-                                        const wrapper = Utils.createElement('div', { className: 'rel-expanded-thread' });
-                                        wrapper.innerHTML = newComments.innerHTML;
-                                        parent.parentNode.insertBefore(wrapper, parent.nextSibling);
-                                        Utils.processNewContent(wrapper);
-                                        expandBtn.textContent = '[loaded]';
-                                        link.style.display = 'none';
-                                    }
+                            const resp = await fetch(link.href);
+                            const html = await resp.text();
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(html, 'text/html');
+                            const newComments = doc.querySelector('.commentarea .sitetable');
+                            if (newComments) {
+                                const parent = link.closest('.morecomments') || link.closest('.child');
+                                if (parent) {
+                                    const wrapper = Utils.createElement('div', { className: 'rel-expanded-thread' });
+                                    wrapper.innerHTML = newComments.innerHTML;
+                                    parent.parentNode.insertBefore(wrapper, parent.nextSibling);
+                                    Utils.processNewContent(wrapper);
+                                    expandBtn.textContent = '[loaded]';
+                                    link.style.display = 'none';
                                 }
+                            } else {
+                                expandBtn.textContent = '[no comments]';
                             }
                         } catch (err) {
                             expandBtn.textContent = '[error]';
@@ -4428,10 +4903,13 @@
                         e.preventDefault();
                         e.stopImmediatePropagation();
                         if (!voteWeights[author]) voteWeights[author] = 0;
-                        voteWeights[author]++;
+                        const wasUp = upArrow.classList.contains('upmod');
+                        // Toggle off = undo previous upvote; toggle on = new upvote
+                        voteWeights[author] += wasUp ? -1 : 1;
+                        if (voteWeights[author] === 0) delete voteWeights[author];
                         saveVoteWeights();
                         this.castVote(thing, 'up');
-                        this.spawnBurst(upArrow, 'up');
+                        if (!wasUp) this.spawnBurst(upArrow, 'up');
                     }, true);
                 }
                 if (downArrow) {
@@ -4439,10 +4917,12 @@
                         e.preventDefault();
                         e.stopImmediatePropagation();
                         if (!voteWeights[author]) voteWeights[author] = 0;
-                        voteWeights[author]--;
+                        const wasDown = downArrow.classList.contains('downmod');
+                        voteWeights[author] += wasDown ? 1 : -1;
+                        if (voteWeights[author] === 0) delete voteWeights[author];
                         saveVoteWeights();
                         this.castVote(thing, 'down');
-                        this.spawnBurst(downArrow, 'down');
+                        if (!wasDown) this.spawnBurst(downArrow, 'down');
                     }, true);
                 }
             });
@@ -4496,13 +4976,14 @@
     // SUBREDDIT SHORTCUTS MODULE
     // =========================================================================
     const SubredditShortcutsModule = {
+        container: null,
+
         init() {
             if (!settings.subredditShortcuts) return;
             const srBar = document.querySelector('#sr-header-area .sr-list');
             if (!srBar) return;
 
             if (subredditShortcuts.length === 0) {
-                // Populate with existing subreddit links
                 const existing = srBar.querySelectorAll('a.choice');
                 existing.forEach(a => {
                     const sr = a.textContent.trim();
@@ -4513,15 +4994,46 @@
                 if (subredditShortcuts.length > 0) saveShortcuts();
             }
 
-            const container = Utils.createElement('span', { className: 'rel-sr-shortcuts' });
+            this.container = Utils.createElement('span', { className: 'rel-sr-shortcuts' });
+            srBar.appendChild(this.container);
+            this.render();
+        },
 
-            subredditShortcuts.forEach(sr => {
+        render() {
+            if (!this.container) return;
+            const t = Themes.getTheme();
+            this.container.innerHTML = '';
+            const isDark = settings.darkMode && settings.theme !== 'light';
+
+            subredditShortcuts.forEach((sr, idx) => {
+                const wrapper = document.createElement('span');
+                wrapper.style.cssText = 'position:relative;display:inline-block;';
+
                 const link = Utils.createElement('a', {
                     href: `/r/${sr}`,
                     textContent: sr,
                     title: `/r/${sr}`
                 });
-                container.appendChild(link);
+                wrapper.appendChild(link);
+
+                const removeBtn = document.createElement('span');
+                removeBtn.textContent = '\u00D7';
+                removeBtn.title = `Remove /r/${sr}`;
+                removeBtn.style.cssText = `position:absolute;top:-4px;right:-4px;font-size:10px;font-weight:700;cursor:pointer;color:${t.error};background:${t.bg};border-radius:50%;width:12px;height:12px;line-height:12px;text-align:center;display:none;border:1px solid ${t.border};z-index:1;`;
+                removeBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    subredditShortcuts.splice(idx, 1);
+                    saveShortcuts();
+                    this.render();
+                    Utils.notify(`Removed /r/${sr}`, 'info');
+                });
+                wrapper.appendChild(removeBtn);
+
+                wrapper.addEventListener('mouseenter', () => { removeBtn.style.display = 'block'; });
+                wrapper.addEventListener('mouseleave', () => { removeBtn.style.display = 'none'; });
+
+                this.container.appendChild(wrapper);
             });
 
             // Add button
@@ -4531,16 +5043,18 @@
                 title: 'Add subreddit shortcut',
                 onClick: () => {
                     const sr = prompt('Enter subreddit name:');
-                    if (sr && !subredditShortcuts.includes(sr.replace('/r/', ''))) {
-                        subredditShortcuts.push(sr.replace('/r/', ''));
-                        saveShortcuts();
-                        location.reload();
+                    if (sr) {
+                        const clean = sr.replace(/^\/?r\//, '').trim();
+                        if (clean && !subredditShortcuts.includes(clean)) {
+                            subredditShortcuts.push(clean);
+                            saveShortcuts();
+                            this.render();
+                            Utils.notify(`Added /r/${clean}`, 'success');
+                        }
                     }
                 }
             });
-            container.appendChild(addBtn);
-
-            srBar.appendChild(container);
+            this.container.appendChild(addBtn);
         }
     };
 
@@ -4710,7 +5224,7 @@
             if (!this._earlyInitDone) {
                 const disableStyles = () => {
                     document.querySelectorAll(
-                        'link[ref="applied_subreddit_stylesheet"], link[title="applied_subreddit_stylesheet"]'
+                        'link[rel="applied_subreddit_stylesheet"], link[title="applied_subreddit_stylesheet"]'
                     ).forEach(s => {
                         if (s.getAttribute('media') !== 'not all') {
                             s.setAttribute('data-rel-disabled', '1');
@@ -5008,7 +5522,7 @@
             SubredditStyleRemoverModule._earlyInitDone = true;
             const disableStyles = () => {
                 document.querySelectorAll(
-                    'link[ref="applied_subreddit_stylesheet"], link[title="applied_subreddit_stylesheet"]'
+                    'link[rel="applied_subreddit_stylesheet"], link[title="applied_subreddit_stylesheet"]'
                 ).forEach(s => {
                     if (s.getAttribute('media') !== 'not all') {
                         s.setAttribute('data-rel-disabled', '1');
@@ -5353,6 +5867,9 @@
         FormattingToolbarModule.init();
         ExpandThreadModule.init();
         HideAutoModeratorModule.init();
+        IgnoredUsersModule.init();
+        CommentNavigatorModule.init();
+        CommentSearchModule.init();
 
         // Fallback comment toggle - handles expand/collapse when Reddit's jQuery is broken
         // ($(...).thing / $(...).slideUp errors in reddit-init.js)
@@ -5385,10 +5902,23 @@
             });
         };
         stripReplyOnclick(document);
-        // Also strip from dynamically loaded content
+        // Native dropdown menu handler - Reddit's open_menu() uses broken jQuery
+        // Strip inline onclick from all dropdowns
+        const stripDropdownOnclick = (root) => {
+            root.querySelectorAll('.dropdown[onclick*="open_menu"]').forEach(dd => {
+                dd.removeAttribute('onclick');
+                dd.setAttribute('data-rel-dropdown', '1');
+                dd.style.cursor = 'pointer';
+            });
+        };
+        stripDropdownOnclick(document);
+        // Single consolidated MutationObserver for both reply and dropdown onclick stripping
         new MutationObserver(muts => {
             muts.forEach(m => m.addedNodes.forEach(n => {
-                if (n.nodeType === 1) stripReplyOnclick(n);
+                if (n.nodeType === 1) {
+                    stripReplyOnclick(n);
+                    stripDropdownOnclick(n);
+                }
             }));
         }).observe(document.body || document.documentElement, { childList: true, subtree: true });
 
@@ -5459,28 +5989,59 @@
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: body.toString()
                 }).then(r => r.json()).then(data => {
-                    // Check for new comment in response
                     let inserted = false;
+                    let child = thing.querySelector(':scope > .child');
+                    if (!child) {
+                        child = document.createElement('div');
+                        child.className = 'child';
+                        thing.appendChild(child);
+                    }
+
+                    // Try jquery format first (HTML blob from Reddit)
                     if (data?.jquery) {
                         for (const cmd of data.jquery) {
                             if (cmd[3]?.[0] && typeof cmd[3][0] === 'string' && cmd[3][0].includes('class="thing')) {
-                                let child = thing.querySelector(':scope > .child');
-                                if (!child) {
-                                    child = document.createElement('div');
-                                    child.className = 'child';
-                                    thing.appendChild(child);
-                                }
                                 child.insertAdjacentHTML('afterbegin', cmd[3][0]);
                                 inserted = true;
                                 break;
                             }
                         }
                     }
+
+                    // Fallback: JSON format (api_type=json response)
+                    if (!inserted && data?.json?.data?.things?.[0]?.data) {
+                        const c = data.json.data.things[0].data;
+                        const loggedUser = document.querySelector('.user a')?.textContent || c.author || 'you';
+                        const commentHtml = `
+                            <div class="thing comment id-${c.name} noncollapsed" data-fullname="${c.name}" data-author="${c.author}">
+                                <div class="entry">
+                                    <p class="tagline">
+                                        <a href="/user/${c.author}" class="author">${c.author}</a>
+                                        <span class="score dislikes">1 point</span>
+                                        <span class="score unvoted">1 point</span>
+                                        <span class="score likes">1 point</span>
+                                        <time class="live-timestamp" datetime="${new Date().toISOString()}">just now</time>
+                                    </p>
+                                    <div class="md"><p>${c.body_html ? new DOMParser().parseFromString(c.body_html, 'text/html').body.innerHTML : Utils.escapeHTML(text)}</p></div>
+                                    <ul class="flat-list buttons">
+                                        <li class="first"><a class="bylink" href="${c.permalink || '#'}">permalink</a></li>
+                                    </ul>
+                                </div>
+                                <div class="child"></div>
+                            </div>`;
+                        child.insertAdjacentHTML('afterbegin', commentHtml);
+                        inserted = true;
+                    }
+
                     formWrapper.style.display = 'none';
                     textarea.value = '';
                     saveBtn.textContent = 'save';
                     saveBtn.disabled = false;
-                    if (inserted) location.reload();
+
+                    // Process new comment for theming, tagging, depth indicators etc
+                    if (inserted && child.firstElementChild) {
+                        Utils.processNewContent(child.firstElementChild);
+                    }
                 }).catch(() => {
                     saveBtn.textContent = 'save';
                     saveBtn.disabled = false;
@@ -5488,22 +6049,6 @@
                 });
             });
         }, true);
-
-        // Native dropdown menu handler - Reddit's open_menu() uses broken jQuery
-        // Strip inline onclick from all dropdowns
-        const stripDropdownOnclick = (root) => {
-            root.querySelectorAll('.dropdown[onclick*="open_menu"]').forEach(dd => {
-                dd.removeAttribute('onclick');
-                dd.setAttribute('data-rel-dropdown', '1');
-                dd.style.cursor = 'pointer';
-            });
-        };
-        stripDropdownOnclick(document);
-        new MutationObserver(muts => {
-            muts.forEach(m => m.addedNodes.forEach(n => {
-                if (n.nodeType === 1) stripDropdownOnclick(n);
-            }));
-        }).observe(document.body || document.documentElement, { childList: true, subtree: true });
 
         // Toggle dropdown on click
         document.addEventListener('click', function(e) {
