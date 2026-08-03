@@ -77,6 +77,7 @@ Every theme provides full coverage across all Reddit elements — headers, sideb
 - **Old Reddit Redirect** — Automatically redirects `www.reddit.com` to `old.reddit.com`
 - **Notification Redirect** — Redirects to `sh.reddit.com/notifications` (which actually works on old Reddit)
 - **State Saver** — Preserves scroll position when navigating back from posts
+- **API Canary** — Periodically checks a public Reddit JSON response and warns when the schema or endpoint becomes unavailable
 
 ### Filtering & Privacy
 

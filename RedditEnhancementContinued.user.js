@@ -157,6 +157,8 @@
             multiRedditBuilder: true,
             sessionTabs: true,
             markAllAsRead: true,
+            apiCanary: true,
+            apiCanaryIntervalHours: 24,
             // Migration flag (skip v2.2.1 migration for new installs)
             _migratedV221: true
         }
@@ -2362,7 +2364,9 @@
                     { key: 'nerPauseAfterPages', label: 'NER Pause After Pages', desc: 'Pause infinite scroll after N pages (0 = never)', type: 'number', min: 0, max: 50 },
                     { key: 'autoHideAfterVote', label: 'Auto-Hide After Vote', desc: 'Hide posts after upvoting or downvoting' },
                     { key: 'stateSaver', label: 'State Saver', desc: 'Preserve scroll position when navigating back from posts' },
-                    { key: 'notificationRedirect', label: 'Notification Redirect', desc: 'Redirect old.reddit.com/notifications to sh.reddit.com (which actually works)' }
+                    { key: 'notificationRedirect', label: 'Notification Redirect', desc: 'Redirect old.reddit.com/notifications to sh.reddit.com (which actually works)' },
+                    { key: 'apiCanary', label: 'Reddit API Canary', desc: 'Periodically check a public JSON response for API/schema changes' },
+                    { key: 'apiCanaryIntervalHours', label: 'Canary Interval (hours)', desc: 'Minimum time between API canary checks (1-168)', type: 'number', min: 1, max: 168 }
                 ],
                 filtering: [
                     { key: 'postFiltering', label: 'Post Filtering', desc: 'Filter posts by keyword, domain, subreddit, flair' },
@@ -3417,6 +3421,56 @@
             Utils.notify(`Switched to ${nextMode === 'device' ? 'per-device' : 'shared'} profile; reloading`, 'success');
             setTimeout(() => location.reload(), 300);
             return true;
+        }
+    };
+
+    // =========================================================================
+    // REDDIT API CANARY MODULE
+    // =========================================================================
+    const ApiCanaryModule = {
+        STORAGE_KEY: 'rel_api_canary_v1',
+        endpoint: '/r/reddit/about.json?raw_json=1',
+
+        validatePayload(payload) {
+            const data = payload?.data;
+            return !!data && typeof data === 'object' && typeof data.display_name === 'string' && typeof data.subscribers === 'number';
+        },
+
+        shouldCheck(lastChecked, now = Date.now(), intervalHours = settings.apiCanaryIntervalHours) {
+            const interval = Math.max(1, Math.min(168, Number(intervalHours) || 24)) * 60 * 60 * 1000;
+            return !Number.isFinite(Number(lastChecked)) || now - Number(lastChecked) >= interval;
+        },
+
+        async check(force = false) {
+            if (!settings.apiCanary && !force) return null;
+            const previous = Storage.get(this.STORAGE_KEY, null);
+            if (!force && previous && !this.shouldCheck(previous.checkedAt)) return previous;
+            let result;
+            try {
+                const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                const timeout = controller ? setTimeout(() => controller.abort(), 15000) : null;
+                const response = await fetch(this.endpoint, {
+                    credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' },
+                    signal: controller?.signal
+                });
+                if (timeout) clearTimeout(timeout);
+                const payload = await response.json();
+                const valid = response.ok && this.validatePayload(payload);
+                result = { checkedAt: Date.now(), ok: valid, status: response.status, shape: valid ? 'reddit-about-v1' : 'unexpected' };
+            } catch (error) {
+                result = { checkedAt: Date.now(), ok: false, status: 0, shape: 'unreachable', error: String(error?.message || error).slice(0, 160) };
+            }
+            Storage.set(this.STORAGE_KEY, result);
+            if (!result.ok) {
+                console.warn('REL API canary warning:', result);
+                Utils.notify('Reddit API response changed or is unreachable. Some REC features may need attention.', 'warning', 7000);
+            }
+            return result;
+        },
+
+        init() {
+            if (!settings.apiCanary) return;
+            this.check().catch(() => {});
         }
     };
 
@@ -8561,6 +8615,8 @@
             buildProfileStorageKey,
             getProfileMode: ProfileModule.getMode.bind(ProfileModule),
             getSettingsDiff: SettingsDiffModule.getDiff.bind(SettingsDiffModule),
+            validateCanaryPayload: ApiCanaryModule.validatePayload.bind(ApiCanaryModule),
+            shouldCheckApiCanary: ApiCanaryModule.shouldCheck.bind(ApiCanaryModule),
             createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
             observeForTest: ObserverRegistry.observe.bind(ObserverRegistry),
             disconnectObservers: ObserverRegistry.disconnectAll.bind(ObserverRegistry),
@@ -8591,6 +8647,7 @@
             MultiRedditModule.init();
             SessionTabsModule.init();
             InboxReadModule.init();
+            ApiCanaryModule.init();
             SubredditDescriptionModule.init();
 
         // Content modules
