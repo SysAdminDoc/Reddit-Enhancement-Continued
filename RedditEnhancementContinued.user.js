@@ -207,7 +207,25 @@
         console.log('REL: Migrated settings from v2.2.0 - reset adBlocker and removeSubredditStyles to safe defaults');
     }
 
+    function normalizeUserTag(tag) {
+        if (!tag || typeof tag !== 'object' || Array.isArray(tag)) return null;
+        return {
+            text: String(tag.text || '').trim().slice(0, 120),
+            color: String(tag.color || 'none'),
+            note: String(tag.note || '').trim().slice(0, 1000)
+        };
+    }
+
     let userTags = Storage.get(CONFIG.storageKeys.userTags, {});
+    if (!userTags || typeof userTags !== 'object' || Array.isArray(userTags)) userTags = {};
+    Object.entries(userTags).forEach(([username, tag]) => {
+        const normalized = normalizeUserTag(tag);
+        if (!normalized) {
+            delete userTags[username];
+            return;
+        }
+        userTags[username] = normalized;
+    });
     let filters = Storage.get(CONFIG.storageKeys.filters, {
         keywords: [], domains: [], subreddits: [], flairs: [], users: [],
         useRegex: false, hideNSFW: false, hideVisited: false, subredditOverrides: {}, regexGroups: []
@@ -2993,8 +3011,8 @@
                                 if (typeof imported !== 'object' || Array.isArray(imported)) throw new Error('Invalid format');
                                 let count = 0;
                                 Object.entries(imported).forEach(([user, tag]) => {
-                                    if (tag && typeof tag === 'object' && tag.text) {
-                                        userTags[user] = tag;
+                                    if (tag && typeof tag === 'object' && (tag.text || tag.note)) {
+                                        userTags[user] = normalizeUserTag(tag);
                                         count++;
                                     }
                                 });
@@ -3178,7 +3196,7 @@
                 const tagBtn = Utils.createElement('span', {
                     className: 'rel-user-tag',
                     textContent: userTags[username] ? userTags[username].text : '\u2605',
-                    title: 'Tag user',
+                    title: userTags[username]?.note ? `Tag user\n${userTags[username].note}` : 'Tag user',
                     onClick: (e) => { e.preventDefault(); e.stopPropagation(); this.showTagPopup(username, e); }
                 });
 
@@ -3207,6 +3225,7 @@
                 <select class="rel-tag-color" style="margin-bottom:10px;">
                     ${Object.keys(this.tagColors).map(c => `<option value="${c}" ${existing.color === c ? 'selected' : ''}>${c}</option>`).join('')}
                 </select>
+                <textarea class="rel-tag-note" maxlength="1000" placeholder="Private note (optional)" style="width:100%;min-height:60px;box-sizing:border-box;margin-bottom:10px;">${Utils.escapeHTML(existing.note || '')}</textarea>
                 <div style="display:flex;gap:6px;">
                     <button class="rel-btn-small rel-btn-primary rel-tag-save">Save</button>
                     <button class="rel-btn-small rel-btn-danger rel-tag-remove">Remove</button>
@@ -3224,8 +3243,9 @@
             popup.querySelector('.rel-tag-save').addEventListener('click', () => {
                 const text = popup.querySelector('.rel-tag-text').value.trim();
                 const color = popup.querySelector('.rel-tag-color').value;
-                if (text) {
-                    userTags[username] = { text, color };
+                const note = popup.querySelector('.rel-tag-note').value.trim();
+                if (text || note) {
+                    userTags[username] = { text, color, note };
                     saveUserTags();
                     this.updateAllTags(username);
                 }
@@ -3268,11 +3288,13 @@
                             tag.style.color = '#fff';
                             tag.style.opacity = '1';
                             tag.style.fontSize = '';
+                            tag.title = userTags[username].note ? `Tag user\n${userTags[username].note}` : 'Tag user';
                         } else {
                             tag.textContent = '\u2605';
                             tag.style.background = 'transparent';
                             tag.style.opacity = '0.4';
                             tag.style.fontSize = '9px';
+                            tag.title = 'Tag user';
                         }
                     }
                 }
@@ -6501,7 +6523,7 @@
                     ${d.is_gold ? '<div style="color:#ffd700;font-size:11px;margin-top:4px;">Gold member</div>' : ''}
                     ${d.is_mod ? '<div style="color:#5bc0de;font-size:11px;margin-top:2px;">Moderator</div>' : ''}
                     ${voteWeights[username] ? `<div style="margin-top:4px;font-size:11px;">Vote weight: <strong style="color:${voteWeights[username] > 0 ? t.success : t.error}">${voteWeights[username] > 0 ? '+' : ''}${voteWeights[username]}</strong></div>` : ''}
-                    ${userTags[username] ? `<div style="margin-top:4px;font-size:11px;">Tag: <span style="background:${UserTaggingModule.tagColors[userTags[username].color] || '#666'};color:#fff;padding:1px 5px;border-radius:3px;">${Utils.escapeHTML(userTags[username].text)}</span></div>` : ''}
+                    ${userTags[username] ? `<div style="margin-top:4px;font-size:11px;">Tag: <span style="background:${UserTaggingModule.tagColors[userTags[username].color] || '#666'};color:#fff;padding:1px 5px;border-radius:3px;">${Utils.escapeHTML(userTags[username].text || '\u2605')}</span></div>${userTags[username].note ? `<div style="margin-top:4px;font-size:11px;opacity:0.85;">Note: ${Utils.escapeHTML(userTags[username].note)}</div>` : ''}` : ''}
                 `;
             } catch (e) {
                 popup.innerHTML = `<h4>u/${Utils.escapeHTML(username)}</h4><div style="opacity:0.6;">Could not load user info</div>`;
@@ -7250,6 +7272,7 @@
             selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule),
             buildRefreshUrl: CommentRefreshModule.buildRefreshUrl.bind(CommentRefreshModule),
             formatQuote: QuoteSelectionModule.formatQuote.bind(QuoteSelectionModule),
+            normalizeUserTag,
             mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
             getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
             testRegexRule: FilterModule.testRegexRule.bind(FilterModule),

@@ -16,6 +16,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Opt-in explainable low-effort title heuristic using configurable length, uppercase, and emoji signals.
 - Added: Opt-in live comment refresh with new-comment insertion, processing, highlight dismissal, and interval control.
 - Added: Per-comment citation quote action that formats selected text as Markdown blockquotes and inserts or copies it.
+- Added: Persistent per-user private notes in the existing tag records, with popup editing and user-info/hover display.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 
