@@ -6,6 +6,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 
 - Added: Keyboard-driven gallery navigation with adjacent-image preloading and dimensions metadata.
 - Added: Resilient Redgifs v2 and Streamable API video expandos with signed-media and host-player fallbacks.
+- Added: Catbox, ImgChest, and ImgBB image-page expandos with safe CDN extraction and multi-image controls.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

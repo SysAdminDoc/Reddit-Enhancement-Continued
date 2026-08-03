@@ -31,6 +31,13 @@
 // @connect      streamable.com
 // @connect      api.streamable.com
 // @connect      api.redgifs.com
+// @connect      catbox.moe
+// @connect      files.catbox.moe
+// @connect      imgchest.com
+// @connect      cdn.imgchest.com
+// @connect      imgbb.com
+// @connect      ibb.co
+// @connect      i.ibb.co
 // @connect      reddit.com
 // @connect      old.reddit.com
 // @connect      www.reddit.com
@@ -2904,11 +2911,15 @@
             'i.redd.it': url => url,
             'preview.redd.it': url => url,
             'i.imgur.com': url => url,
+            'files.catbox.moe': url => url,
+            'cdn.imgchest.com': url => url,
+            'i.ibb.co': url => url,
             'imgur.com': url => {
                 const m = url.match(/imgur\.com\/(?:a\/|gallery\/)?(\w+)/);
                 return m ? `https://i.imgur.com/${m[1]}.jpg` : null;
             }
         },
+        imagePageHosts: ['catbox.moe', 'imgchest.com', 'imgbb.com', 'ibb.co'],
         videoHosts: ['v.redd.it', 'gfycat.com', 'redgifs.com', 'streamable.com'],
         redgifsToken: null,
         redgifsTokenExpiresAt: 0,
@@ -2938,6 +2949,166 @@
                     ontimeout: () => reject(new Error('Network request timed out'))
                 });
             });
+        },
+
+        requestText(url) {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    headers: { Accept: 'text/html,application/xhtml+xml' },
+                    timeout: 15000,
+                    onload: (response) => {
+                        if (response.status < 200 || response.status >= 300) {
+                            reject(new Error(`Request failed with status ${response.status}`));
+                            return;
+                        }
+                        resolve(response.responseText || '');
+                    },
+                    onerror: () => reject(new Error('Network request failed')),
+                    ontimeout: () => reject(new Error('Network request timed out'))
+                });
+            });
+        },
+
+        isSupportedImageUrl(url) {
+            return /^https?:\/\/(?:[^/]+\.)?(?:catbox\.moe|imgchest\.com|imgbb\.com|ibb\.co)\//i.test(url);
+        },
+
+        extractImageUrlsFromHTML(html, baseUrl) {
+            const urls = [];
+            const attributePattern = /(?:content|data-src|data-original|src|href)\s*=\s*["']([^"']+)["']/gi;
+            let match;
+            while ((match = attributePattern.exec(html)) !== null) {
+                let candidate = match[1].replace(/&amp;/g, '&').replace(/\\\//g, '/');
+                try { candidate = new URL(candidate, baseUrl).href; } catch { continue; }
+                if (this.isSupportedImageUrl(candidate) && !urls.includes(candidate)) urls.push(candidate);
+            }
+            return urls;
+        },
+
+        async resolveImageUrls(url) {
+            const directUrls = [];
+            for (const [host, resolver] of Object.entries(this.imageHosts)) {
+                if (!url.includes(host)) continue;
+                const resolved = resolver(url);
+                if (resolved && (/\.(jpg|jpeg|png|gif|webp|bmp|avif)(?:\?.*)?$/i.test(resolved) || this.isSupportedImageUrl(resolved))) {
+                    directUrls.push(resolved);
+                }
+                break;
+            }
+            if (directUrls.length > 0) return [...new Set(directUrls)];
+
+            if (this.imagePageHosts.some(host => url.includes(host))) {
+                const html = await this.requestText(url);
+                return this.extractImageUrlsFromHTML(html, url);
+            }
+            return [url];
+        },
+
+        renderImageCollection(urls, container, thing) {
+            const t = Themes.getTheme();
+            let currentIdx = 0;
+            const viewer = document.createElement('div');
+            viewer.style.cssText = 'position:relative;text-align:center;';
+
+            const img = document.createElement('img');
+            img.style.cssText = 'display:block;max-width:100%;max-height:600px;margin:0 auto;border-radius:4px;cursor:pointer;';
+            img.addEventListener('click', () => window.open(urls[currentIdx], '_blank'));
+            // Preserve the existing drag-to-resize behavior for direct and resolved images.
+            let startY;
+            let startH;
+            img.addEventListener('mousedown', (event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                startY = event.clientY;
+                startH = img.offsetHeight;
+                const onMove = (moveEvent) => {
+                    img.style.maxHeight = 'none';
+                    img.style.height = Math.max(50, startH + (moveEvent.clientY - startY)) + 'px';
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+            viewer.appendChild(img);
+
+            const update = () => {
+                img.src = urls[currentIdx];
+                img.alt = `Expanded image ${currentIdx + 1} of ${urls.length}`;
+                label.textContent = urls.length > 1 ? `${currentIdx + 1} / ${urls.length}` : '';
+            };
+
+            const label = document.createElement('span');
+            label.style.cssText = `font-size:12px;color:${t.fgMuted};`;
+            const controls = document.createElement('div');
+            controls.style.cssText = `display:flex;justify-content:center;align-items:center;gap:10px;padding:6px 0;`;
+
+            if (urls.length > 1) {
+                const buttonStyle = `padding:4px 10px;border-radius:4px;cursor:pointer;border:1px solid ${t.border};background:${t.surface};color:${t.fg};font-size:12px;`;
+                const prev = document.createElement('button');
+                prev.type = 'button';
+                prev.textContent = '\u25C0 Prev';
+                prev.style.cssText = buttonStyle;
+                prev.addEventListener('click', () => {
+                    currentIdx = (currentIdx - 1 + urls.length) % urls.length;
+                    update();
+                });
+                const next = document.createElement('button');
+                next.type = 'button';
+                next.textContent = 'Next \u25B6';
+                next.style.cssText = buttonStyle;
+                next.addEventListener('click', () => {
+                    currentIdx = (currentIdx + 1) % urls.length;
+                    update();
+                });
+                controls.appendChild(prev);
+                controls.appendChild(label);
+                controls.appendChild(next);
+            }
+
+            container.appendChild(viewer);
+            if (urls.length > 1) container.appendChild(controls);
+            update();
+
+            img.addEventListener('error', () => {
+                container.innerHTML = '';
+                const link = document.createElement('a');
+                link.href = thing.getAttribute('data-url') || urls[currentIdx];
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = 'Image failed to load; open original';
+                link.style.color = t.accent;
+                container.appendChild(link);
+            });
+        },
+
+        async loadImage(url, container, thing) {
+            const t = Themes.getTheme();
+            const loading = Utils.createElement('div', {
+                className: 'rel-media-loading',
+                textContent: 'Loading image...',
+                style: { padding: '10px', color: t.fgDim, fontSize: '12px' }
+            });
+            container.appendChild(loading);
+            try {
+                const urls = (await this.resolveImageUrls(url)).filter(Boolean);
+                if (urls.length === 0) throw new Error('No image URL found');
+                loading.remove();
+                this.renderImageCollection(urls, container, thing);
+            } catch {
+                loading.remove();
+                const link = document.createElement('a');
+                link.href = url;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = 'Open image on host';
+                link.style.color = t.accent;
+                container.appendChild(link);
+            }
         },
 
         extractRedgifsId(url) {
@@ -3151,7 +3322,8 @@
                 if (existingExpando && !existingExpando.classList.contains('collapsed')) return;
 
                 const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)(\?.*)?$/i.test(url) ||
-                                Object.keys(this.imageHosts).some(h => url.includes(h));
+                                Object.keys(this.imageHosts).some(h => url.includes(h)) ||
+                                this.imagePageHosts.some(h => url.includes(h));
                 const isVideo = this.videoHosts.some(h => url.includes(h));
                 const isGallery = url.includes('/gallery/') || thing.classList.contains('gallery');
 
@@ -3186,34 +3358,7 @@
 
             if (type === 'image') {
                 let imgUrl = url;
-                for (const [host, resolver] of Object.entries(this.imageHosts)) {
-                    if (url.includes(host)) { imgUrl = resolver(url) || url; break; }
-                }
-                const img = Utils.createElement('img', {
-                    src: imgUrl, style: { maxWidth: '100%', maxHeight: '600px', cursor: 'pointer', borderRadius: '4px' },
-                    onClick: () => window.open(imgUrl, '_blank')
-                });
-                img.addEventListener('error', () => { container.innerHTML = `<a href="${Utils.escapeHTML(url)}" target="_blank">[Image failed to load]</a>`; });
-
-                // Drag to resize
-                let startY, startH;
-                img.addEventListener('mousedown', (e) => {
-                    if (e.button !== 0) return;
-                    e.preventDefault();
-                    startY = e.clientY;
-                    startH = img.offsetHeight;
-                    const onMove = (e2) => {
-                        img.style.maxHeight = 'none';
-                        img.style.height = Math.max(50, startH + (e2.clientY - startY)) + 'px';
-                    };
-                    const onUp = () => {
-                        document.removeEventListener('mousemove', onMove);
-                        document.removeEventListener('mouseup', onUp);
-                    };
-                    document.addEventListener('mousemove', onMove);
-                    document.addEventListener('mouseup', onUp);
-                });
-                container.appendChild(img);
+                this.loadImage(url, container, thing);
             } else if (type === 'video') {
                 // v.redd.it uses DASH - embed via Reddit's own player
                 const fullname = thing.getAttribute('data-fullname') || '';
@@ -6081,7 +6226,9 @@
             extractRedgifsId: ImageExpansionModule.extractRedgifsId.bind(ImageExpansionModule),
             extractStreamableId: ImageExpansionModule.extractStreamableId.bind(ImageExpansionModule),
             selectRedgifsMedia: ImageExpansionModule.selectRedgifsMedia.bind(ImageExpansionModule),
-            selectStreamableFile: ImageExpansionModule.selectStreamableFile.bind(ImageExpansionModule)
+            selectStreamableFile: ImageExpansionModule.selectStreamableFile.bind(ImageExpansionModule),
+            isSupportedImageUrl: ImageExpansionModule.isSupportedImageUrl.bind(ImageExpansionModule),
+            extractImageUrlsFromHTML: ImageExpansionModule.extractImageUrlsFromHTML.bind(ImageExpansionModule)
         });
     }
 
