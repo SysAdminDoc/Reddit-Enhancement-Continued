@@ -8,6 +8,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Resilient Redgifs v2 and Streamable API video expandos with signed-media and host-player fallbacks.
 - Added: Catbox, ImgChest, and ImgBB image-page expandos with safe CDN extraction and multi-image controls.
 - Added: Syndication-first X/Twitter previews with media rendering and no-iframe oEmbed fallback.
+- Added: Native v.redd.it DASH video/audio remux through MediaSource with codec and embed fallbacks.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

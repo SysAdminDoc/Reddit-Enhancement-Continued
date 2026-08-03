@@ -55,6 +55,11 @@ vm.runInNewContext(source, {
 assert.equal(hooks.extractRedgifsId('https://redgifs.com/watch/AbC123'), 'AbC123');
 assert.equal(hooks.extractStreamableId('https://streamable.com/o/hn8hq'), 'hn8hq');
 assert.equal(hooks.extractStreamableId('https://streamable.com/hn8hq'), 'hn8hq');
+assert.equal(hooks.extractRedditVideoId('https://v.redd.it/abc123/DASH_720.mp4'), 'abc123');
+assert.equal(JSON.stringify(hooks.buildRedditVideoUrls('https://v.redd.it/abc123', '480')), JSON.stringify({
+    video: 'https://v.redd.it/abc123/DASH_480.mp4',
+    audio: 'https://v.redd.it/abc123/DASH_AUDIO_128.mp4'
+}));
 
 const redgifs = hooks.selectRedgifsMedia({
     gif: {

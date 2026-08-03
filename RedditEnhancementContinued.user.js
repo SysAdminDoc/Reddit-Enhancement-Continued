@@ -2973,6 +2973,26 @@
             });
         },
 
+        requestArrayBuffer(url) {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    responseType: 'arraybuffer',
+                    timeout: 30000,
+                    onload: (response) => {
+                        if (response.status < 200 || response.status >= 300 || !response.response) {
+                            reject(new Error(`Request failed with status ${response.status}`));
+                            return;
+                        }
+                        resolve(response.response);
+                    },
+                    onerror: () => reject(new Error('Network request failed')),
+                    ontimeout: () => reject(new Error('Network request timed out'))
+                });
+            });
+        },
+
         isSupportedImageUrl(url) {
             return /^https?:\/\/(?:[^/]+\.)?(?:catbox\.moe|imgchest\.com|imgbb\.com|ibb\.co)\//i.test(url);
         },
@@ -3123,6 +3143,116 @@
             return match ? match[1] : null;
         },
 
+        extractRedditVideoId(url) {
+            const match = url.match(/v\.redd\.it\/([a-z0-9]+)/i);
+            return match ? match[1] : null;
+        },
+
+        buildRedditVideoUrls(url, quality = '720') {
+            const id = this.extractRedditVideoId(url);
+            if (!id) return null;
+            const base = `https://v.redd.it/${encodeURIComponent(id)}`;
+            return {
+                video: `${base}/DASH_${quality}.mp4`,
+                audio: `${base}/DASH_AUDIO_128.mp4`
+            };
+        },
+
+        renderRedditEmbed(fullname, container) {
+            const postId = fullname.replace('t3_', '');
+            const iframe = document.createElement('iframe');
+            iframe.src = `https://www.redditmedia.com/${postId}?ref_source=embed&ref=share&embed=true&theme=dark`;
+            iframe.style.cssText = 'width:100%;max-width:640px;height:360px;border:none;border-radius:6px;';
+            iframe.setAttribute('allowfullscreen', '');
+            iframe.setAttribute('loading', 'lazy');
+            container.appendChild(iframe);
+        },
+
+        getSupportedMediaType(candidates) {
+            if (typeof MediaSource === 'undefined' || typeof MediaSource.isTypeSupported !== 'function') return null;
+            return candidates.find(type => MediaSource.isTypeSupported(type)) || null;
+        },
+
+        appendMediaBuffer(sourceBuffer, data) {
+            return new Promise((resolve, reject) => {
+                const onUpdate = () => {
+                    sourceBuffer.removeEventListener('updateend', onUpdate);
+                    sourceBuffer.removeEventListener('error', onError);
+                    resolve();
+                };
+                const onError = () => {
+                    sourceBuffer.removeEventListener('updateend', onUpdate);
+                    sourceBuffer.removeEventListener('error', onError);
+                    reject(new Error('MediaSource buffer error'));
+                };
+                sourceBuffer.addEventListener('updateend', onUpdate, { once: true });
+                sourceBuffer.addEventListener('error', onError, { once: true });
+                try { sourceBuffer.appendBuffer(data); }
+                catch (error) {
+                    sourceBuffer.removeEventListener('updateend', onUpdate);
+                    sourceBuffer.removeEventListener('error', onError);
+                    reject(error);
+                }
+            });
+        },
+
+        async loadRedditVideo(url, container) {
+            const qualities = ['720', '480', '360', '240'];
+            let videoData = null;
+            let selectedUrls = null;
+            for (const quality of qualities) {
+                const urls = this.buildRedditVideoUrls(url, quality);
+                if (!urls) throw new Error('Invalid Reddit video URL');
+                try {
+                    videoData = await this.requestArrayBuffer(urls.video);
+                    selectedUrls = urls;
+                    break;
+                } catch {}
+            }
+            if (!videoData || !selectedUrls) throw new Error('Reddit video track unavailable');
+            const audioData = await this.requestArrayBuffer(selectedUrls.audio);
+
+            const videoType = this.getSupportedMediaType([
+                'video/mp4; codecs="avc1.4D401F"',
+                'video/mp4; codecs="avc1.640028"',
+                'video/mp4'
+            ]);
+            const audioType = this.getSupportedMediaType([
+                'audio/mp4; codecs="mp4a.40.2"',
+                'audio/mp4'
+            ]);
+            if (!videoType || !audioType) throw new Error('MediaSource MP4 codecs unavailable');
+
+            const mediaSource = new MediaSource();
+            const objectUrl = URL.createObjectURL(mediaSource);
+            const video = document.createElement('video');
+            video.controls = true;
+            video.playsInline = true;
+            video.preload = 'metadata';
+            video.style.cssText = 'display:block;width:100%;max-width:720px;max-height:600px;border-radius:6px;background:#000;';
+            video.src = objectUrl;
+            container.innerHTML = '';
+            container.appendChild(video);
+            container._relMediaCleanup = () => URL.revokeObjectURL(objectUrl);
+
+            await new Promise((resolve, reject) => {
+                const onOpen = async () => {
+                    mediaSource.removeEventListener('sourceopen', onOpen);
+                    try {
+                        const videoBuffer = mediaSource.addSourceBuffer(videoType);
+                        const audioBuffer = mediaSource.addSourceBuffer(audioType);
+                        await this.appendMediaBuffer(videoBuffer, videoData);
+                        await this.appendMediaBuffer(audioBuffer, audioData);
+                        if (mediaSource.readyState === 'open') mediaSource.endOfStream();
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                mediaSource.addEventListener('sourceopen', onOpen, { once: true });
+            });
+        },
+
         selectRedgifsMedia(payload) {
             const gif = payload?.gif || payload?.data?.gif || payload?.data || payload;
             const urls = gif?.urls || {};
@@ -3219,6 +3349,16 @@
 
         async loadVideo(thing, container, url) {
             const t = Themes.getTheme();
+            const fullname = thing.getAttribute('data-fullname') || '';
+            if (url.includes('v.redd.it') && fullname) {
+                try {
+                    await this.loadRedditVideo(url, container);
+                } catch {
+                    container.innerHTML = '';
+                    this.renderRedditEmbed(fullname, container);
+                }
+                return;
+            }
             const loading = Utils.createElement('div', {
                 className: 'rel-media-loading',
                 textContent: 'Loading video...',
@@ -3348,6 +3488,7 @@
             const existing = thing.querySelector('.rel-media-expando');
             if (existing) {
                 existing._relGalleryCleanup?.();
+                existing._relMediaCleanup?.();
                 existing.remove();
                 btn.textContent = type === 'gallery' ? '[+gallery]' : (type === 'image' ? '[+img]' : '[+vid]');
                 return;
@@ -3359,25 +3500,9 @@
             });
 
             if (type === 'image') {
-                let imgUrl = url;
                 this.loadImage(url, container, thing);
             } else if (type === 'video') {
-                // v.redd.it uses DASH - embed via Reddit's own player
-                const fullname = thing.getAttribute('data-fullname') || '';
-                if (url.includes('v.redd.it') && fullname) {
-                    const postId = fullname.replace('t3_', '');
-                    const iframe = document.createElement('iframe');
-                    iframe.src = `https://www.redditmedia.com/${postId}?ref_source=embed&ref=share&embed=true&theme=dark`;
-                    iframe.style.cssText = 'width:100%;max-width:640px;height:360px;border:none;border-radius:6px;';
-                    iframe.setAttribute('allowfullscreen', '');
-                    iframe.setAttribute('loading', 'lazy');
-                    container.appendChild(iframe);
-                } else if (url.includes('redgifs.com') || url.includes('streamable.com')) {
-                    this.loadVideo(thing, container, url);
-                } else {
-                    const video = this.createVideoElement({ url });
-                    container.appendChild(video);
-                }
+                this.loadVideo(thing, container, url);
             } else if (type === 'gallery') {
                 this.loadGallery(thing, container);
             }
@@ -6403,6 +6528,8 @@
             getGalleryIndex: ImageExpansionModule.getGalleryIndex.bind(ImageExpansionModule),
             extractRedgifsId: ImageExpansionModule.extractRedgifsId.bind(ImageExpansionModule),
             extractStreamableId: ImageExpansionModule.extractStreamableId.bind(ImageExpansionModule),
+            extractRedditVideoId: ImageExpansionModule.extractRedditVideoId.bind(ImageExpansionModule),
+            buildRedditVideoUrls: ImageExpansionModule.buildRedditVideoUrls.bind(ImageExpansionModule),
             selectRedgifsMedia: ImageExpansionModule.selectRedgifsMedia.bind(ImageExpansionModule),
             selectStreamableFile: ImageExpansionModule.selectStreamableFile.bind(ImageExpansionModule),
             isSupportedImageUrl: ImageExpansionModule.isSupportedImageUrl.bind(ImageExpansionModule),
