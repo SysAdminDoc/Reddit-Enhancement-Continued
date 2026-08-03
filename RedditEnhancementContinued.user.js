@@ -152,6 +152,7 @@
             syncEndpoint: '',
             syncUsername: '',
             syncToken: '',
+            perDeviceProfile: false,
             savedViewsMenu: true,
             multiRedditBuilder: true,
             sessionTabs: true,
@@ -201,6 +202,20 @@
         }
     };
 
+    const SHARED_SETTINGS_KEY = 'rel_settings_v2';
+    const PROFILE_MODE_KEY = 'rel_profile_mode_v1';
+    const PROFILE_ID_KEY = 'rel_profile_id_v1';
+    let profileMode = Storage.get(PROFILE_MODE_KEY, 'shared') === 'device' ? 'device' : 'shared';
+    let profileId = Storage.get(PROFILE_ID_KEY, '');
+    if (!/^[a-z0-9-]{8,80}$/i.test(String(profileId))) {
+        profileId = `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        Storage.set(PROFILE_ID_KEY, profileId);
+    }
+    function buildProfileStorageKey(mode, id = profileId) {
+        return mode === 'device' ? `${SHARED_SETTINGS_KEY}_${String(id).replace(/[^a-z0-9-]/gi, '').slice(0, 80)}` : SHARED_SETTINGS_KEY;
+    }
+    CONFIG.storageKeys.settings = buildProfileStorageKey(profileMode);
+
     // Load settings with migration from v1
     let settings = Storage.get(CONFIG.storageKeys.settings, null);
     if (!settings) {
@@ -210,6 +225,7 @@
     Object.keys(CONFIG.defaults).forEach(key => {
         if (settings[key] === undefined) settings[key] = CONFIG.defaults[key];
     });
+    settings.perDeviceProfile = profileMode === 'device';
 
     // Migration from v2.2.0: reset features that caused post hiding
     if (!settings._migratedV221) {
@@ -2245,6 +2261,7 @@
                     { key: 'multiRedditBuilder', label: 'Multi-Reddit Builder', desc: 'Build and save combined subreddit feeds locally' },
                     { key: 'sessionTabs', label: 'Session Tabs', desc: 'Remember open comment threads across reloads in this browser session' },
                     { key: 'markAllAsRead', label: 'Inbox Mark All Read', desc: 'Add a bulk mark-as-read action to old Reddit message pages' },
+                    { key: 'perDeviceProfile', label: 'Per-Device Profile', desc: 'Keep settings in this browser profile instead of the shared userscript store', type: 'profile' },
                     { key: 'oldRedditRedirect', label: 'Old Reddit Redirect', desc: 'Redirect to old.reddit.com automatically' },
                     { key: 'scrollToTopOnNav', label: 'Scroll to Top', desc: 'Scroll to top when navigating pages' },
                     { key: 'nerPauseAfterPages', label: 'NER Pause After Pages', desc: 'Pause infinite scroll after N pages (0 = never)', type: 'number', min: 0, max: 50 },
@@ -2329,6 +2346,8 @@
                         content.appendChild(this.buildSelectSetting(def));
                     } else if (def.type === 'number') {
                         content.appendChild(this.buildNumberSetting(def));
+                    } else if (def.type === 'profile') {
+                        content.appendChild(this.buildProfileSetting(def));
                     } else {
                         content.appendChild(this.buildToggle(def));
                     }
@@ -3067,6 +3086,24 @@
             return section;
         },
 
+        buildProfileSetting(def) {
+            const item = Utils.createElement('div', { className: 'rel-setting-item' });
+            item.innerHTML = `
+                <div class="rel-setting-info">
+                    <label>${Utils.escapeHTML(def.label)}</label>
+                    <div class="rel-setting-desc">${Utils.escapeHTML(def.desc)} Switching profiles reloads the page.</div>
+                </div>
+            `;
+            const toggle = Utils.createElement('label', { className: 'rel-toggle' });
+            const input = Utils.createElement('input', { type: 'checkbox' });
+            input.checked = profileMode === 'device';
+            input.addEventListener('change', () => ProfileModule.setMode(input.checked ? 'device' : 'shared'));
+            toggle.appendChild(input);
+            toggle.appendChild(Utils.createElement('span', { className: 'rel-toggle-slider' }));
+            item.appendChild(toggle);
+            return item;
+        },
+
         buildSyncSettings() {
             const section = Utils.createElement('div', { className: 'rel-settings-section' });
             section.innerHTML = '<h3>Encrypted Cloud Sync</h3><div class="rel-setting-desc" style="margin-bottom:10px;">Sync an encrypted settings snapshot to your own Gist, Pastebin paste, or WebDAV file. The passphrase is requested for each operation and never stored.</div>';
@@ -3172,6 +3209,27 @@
                 style3.textContent = uxCSS;
                 document.head.appendChild(style3);
             }
+        }
+    };
+
+    // =========================================================================
+    // PROFILE SCOPE MODULE
+    // =========================================================================
+    const ProfileModule = {
+        getMode() { return profileMode; },
+        getProfileId() { return profileId; },
+        getStorageKey(mode = profileMode) { return buildProfileStorageKey(mode, profileId); },
+
+        setMode(mode) {
+            const nextMode = mode === 'device' ? 'device' : 'shared';
+            if (nextMode === profileMode) return false;
+            const nextSettings = { ...settings, perDeviceProfile: nextMode === 'device' };
+            Storage.set(buildProfileStorageKey(nextMode), nextSettings);
+            Storage.set(PROFILE_MODE_KEY, nextMode);
+            profileMode = nextMode;
+            Utils.notify(`Switched to ${nextMode === 'device' ? 'per-device' : 'shared'} profile; reloading`, 'success');
+            setTimeout(() => location.reload(), 300);
+            return true;
         }
     };
 
@@ -3288,7 +3346,8 @@
                     syncProvider: settings.syncProvider,
                     syncEndpoint: settings.syncEndpoint,
                     syncUsername: settings.syncUsername,
-                    syncToken: settings.syncToken
+                    syncToken: settings.syncToken,
+                    perDeviceProfile: settings.perDeviceProfile
                 };
             }
             Storage.importAll(JSON.stringify(imported));
@@ -8309,6 +8368,8 @@
             createSyncSnapshot: SyncModule.createSnapshot.bind(SyncModule),
             encryptSyncSnapshot: SyncModule.encryptSnapshot.bind(SyncModule),
             decryptSyncSnapshot: SyncModule.decryptSnapshot.bind(SyncModule),
+            buildProfileStorageKey,
+            getProfileMode: ProfileModule.getMode.bind(ProfileModule),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });

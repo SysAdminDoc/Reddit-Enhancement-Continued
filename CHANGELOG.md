@@ -24,6 +24,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Session-scoped thread tabs that remember comment links across reloads with close and clear controls.
 - Added: Inbox-only bulk "Mark all as read" action using Reddit's same-origin read-all endpoint with modhash protection.
 - Added: Opt-in AES-GCM encrypted sync snapshots with private Gist, Pastebin, and WebDAV adapters; passphrases are never stored.
+- Added: Per-device settings profile scope with safe shared/device store switching and reload handoff.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

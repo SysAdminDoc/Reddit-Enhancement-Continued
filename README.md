@@ -117,7 +117,7 @@ All settings are accessible from the **⚙** gear icon in the bottom-right corne
 | **Content** | Media embedding, image expansion, timestamps, user info, view counters, vote estimates |
 | **Comments** | Highlighting, depth indicators, child collapse, formatting toolbar, bot hiding |
 | **Navigation** | Infinite scroll, keyboard nav, shortcuts, redirects, state saver |
-| **Sync** | Optional AES-GCM encrypted snapshots to a private Gist, Pastebin, or WebDAV file |
+| **Sync** | Optional AES-GCM encrypted snapshots to a private Gist, Pastebin, or WebDAV file; per-device profile scope |
 | **Filtering** | Keyword/domain/subreddit/flair/user filters, regex, NSFW toggle, ignore list |
 | **Privacy** | No participation mode, ad blocker |
 | **Backup** | Export/import all settings, tags, filters, and macros as JSON |
