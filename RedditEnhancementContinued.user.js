@@ -75,7 +75,8 @@
             settingsBackup: 'rel_backup',
             savedViews: 'rel_saved_views_v1',
             multiReddits: 'rel_multireddits_v1',
-            customPalettes: 'rel_custom_palettes_v1'
+            customPalettes: 'rel_custom_palettes_v1',
+            fontPairings: 'rel_font_pairings_v1'
         },
         defaults: {
             // Core
@@ -312,6 +313,8 @@
     if (!Array.isArray(multiReddits)) multiReddits = [];
     let customPalettes = Storage.get(CONFIG.storageKeys.customPalettes, {});
     if (!customPalettes || typeof customPalettes !== 'object' || Array.isArray(customPalettes)) customPalettes = {};
+    let fontPairings = Storage.get(CONFIG.storageKeys.fontPairings, {});
+    if (!fontPairings || typeof fontPairings !== 'object' || Array.isArray(fontPairings)) fontPairings = {};
 
     function saveSettings() { Storage.set(CONFIG.storageKeys.settings, settings); }
     function saveUserTags() { Storage.set(CONFIG.storageKeys.userTags, userTags); }
@@ -1423,6 +1426,76 @@
     customPalettes = PaletteModule.normalizePalettes(customPalettes);
 
     // =========================================================================
+    // FONT PAIRING MODULE
+    // =========================================================================
+    const FontPairingModule = {
+        PAIRS: {
+            system: {
+                name: 'System UI',
+                body: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                heading: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            },
+            humanist: {
+                name: 'Humanist',
+                body: '"Trebuchet MS", "Segoe UI", sans-serif',
+                heading: '"Gill Sans", "Trebuchet MS", sans-serif'
+            },
+            classic: {
+                name: 'Classic Web',
+                body: 'Arial, Helvetica, sans-serif',
+                heading: 'Verdana, Arial, sans-serif'
+            },
+            editorial: {
+                name: 'Editorial',
+                body: 'Georgia, "Times New Roman", serif',
+                heading: 'Georgia, "Times New Roman", serif'
+            },
+            mono: {
+                name: 'Mono Accent',
+                body: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                heading: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace'
+            }
+        },
+
+        normalizePairing(value) {
+            return Object.prototype.hasOwnProperty.call(this.PAIRS, value) ? value : 'system';
+        },
+
+        getPairing(themeId = settings.theme) {
+            return this.normalizePairing(fontPairings[themeId]);
+        },
+
+        setPairing(themeId, pairing) {
+            if (!Themes.definitions[themeId]) return false;
+            const normalized = this.normalizePairing(pairing);
+            if (normalized === 'system') delete fontPairings[themeId];
+            else fontPairings[themeId] = normalized;
+            Storage.set(CONFIG.storageKeys.fontPairings, fontPairings);
+            this.apply();
+            return true;
+        },
+
+        apply() {
+            document.querySelectorAll('[data-rel-font-pairing]').forEach(style => style.remove());
+            const pairing = this.PAIRS[this.getPairing()];
+            if (!pairing || this.getPairing() === 'system') {
+                document.body.removeAttribute('data-rel-font-pairing');
+                return;
+            }
+            const style = document.createElement('style');
+            style.setAttribute('data-rel-font-pairing', this.getPairing());
+            style.textContent = `
+                body, body input, body textarea, body select, body button { font-family: ${pairing.body} !important; }
+                body h1, body h2, body h3, body .title, body .author, body .rel-settings-header, body .rel-settings-tabs { font-family: ${pairing.heading} !important; }
+            `;
+            document.head.appendChild(style);
+            document.body.setAttribute('data-rel-font-pairing', this.getPairing());
+        },
+
+        init() { this.apply(); }
+    };
+
+    // =========================================================================
     // BASE STYLES
     // =========================================================================
     const Styles = {
@@ -2473,7 +2546,8 @@
                     { key: 'wideView', label: 'Wide View', desc: 'Expand content area to use full screen width' },
                     { key: 'enhancedUI', label: 'Enhanced UI', desc: 'Modern typography, card layouts, rainbow threads, polished interactions' },
                     { key: 'discordLayout', label: 'Discord-Style Layout (Experimental)', desc: 'Use channel-like headers and chat-style cards; reload to apply' },
-                    { type: 'paletteEditor' }
+                    { type: 'paletteEditor' },
+                    { type: 'fontPicker' }
                 ],
                 content: [
                     { key: 'inlineImageExpansion', label: 'Inline Image Expansion', desc: 'Expand images and videos inline' },
@@ -2603,6 +2677,8 @@
                         content.appendChild(this.buildThemePicker());
                     } else if (def.type === 'paletteEditor') {
                         content.appendChild(this.buildPaletteEditor());
+                    } else if (def.type === 'fontPicker') {
+                        content.appendChild(this.buildFontPicker());
                     } else if (def.type === 'filterEditor') {
                         content.appendChild(this.buildFilterEditor());
                     } else if (def.type === 'commentSweep') {
@@ -2803,6 +2879,35 @@
             return section;
         },
 
+        buildFontPicker() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Font Pairing</h3><div class="rel-setting-desc" style="margin-bottom:8px;">Choose a local system font pairing for the selected theme. No fonts are downloaded.</div>';
+            const themeSelect = Utils.createElement('select', { className: 'rel-select', style: { marginBottom: '8px' } });
+            Object.entries(Themes.definitions).forEach(([id, theme]) => {
+                const option = Utils.createElement('option', { value: id, textContent: theme.name });
+                if (id === settings.theme) option.selected = true;
+                themeSelect.appendChild(option);
+            });
+            const pairSelect = Utils.createElement('select', { className: 'rel-select', style: { width: '100%', marginBottom: '8px' } });
+            const renderPairs = () => {
+                pairSelect.innerHTML = '';
+                const selected = FontPairingModule.getPairing(themeSelect.value);
+                Object.entries(FontPairingModule.PAIRS).forEach(([id, pair]) => {
+                    const option = Utils.createElement('option', { value: id, textContent: pair.name });
+                    if (id === selected) option.selected = true;
+                    pairSelect.appendChild(option);
+                });
+            };
+            themeSelect.addEventListener('change', renderPairs);
+            pairSelect.addEventListener('change', () => FontPairingModule.setPairing(themeSelect.value, pairSelect.value));
+            section.appendChild(Utils.createElement('label', { textContent: 'Theme', style: { display: 'block', fontSize: '11px', marginBottom: '3px' } }));
+            section.appendChild(themeSelect);
+            section.appendChild(Utils.createElement('label', { textContent: 'Font pair', style: { display: 'block', fontSize: '11px', margin: '6px 0 3px' } }));
+            section.appendChild(pairSelect);
+            renderPairs();
+            return section;
+        },
+
         buildThemePicker() {
             const section = Utils.createElement('div', { className: 'rel-settings-section' });
             section.innerHTML = '<h3>Theme</h3>';
@@ -2819,6 +2924,7 @@
                         grid.querySelectorAll('.rel-theme-card').forEach(c => c.classList.remove('active'));
                         card.classList.add('active');
                         this.applyThemeCSS();
+                        FontPairingModule.apply();
                         Utils.notify(`Theme: ${theme.name}`, 'success', 1500);
                     }
                 });
@@ -8990,6 +9096,8 @@
             getDiscordInitials: DiscordLayoutModule.getInitials.bind(DiscordLayoutModule),
             normalizePaletteValue: PaletteModule.normalizeValue.bind(PaletteModule),
             normalizePalettes: PaletteModule.normalizePalettes.bind(PaletteModule),
+            normalizeFontPairing: FontPairingModule.normalizePairing.bind(FontPairingModule),
+            getFontPairing: FontPairingModule.getPairing.bind(FontPairingModule),
             createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
             observeForTest: ObserverRegistry.observe.bind(ObserverRegistry),
             disconnectObservers: ObserverRegistry.disconnectAll.bind(ObserverRegistry),
@@ -9004,6 +9112,7 @@
     function initModules() {
         // Apply body classes
         DarkModeModule.init();
+        FontPairingModule.init();
 
         // Style/Layout modules (run early)
         SubredditStyleRemoverModule.init();

@@ -34,6 +34,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Changed: REC dialogs now expose accessible names, modal semantics, Escape close, focus trapping, and focus restoration.
 - Added: Opt-in Discord-style experimental layout with channel context, chat-like cards, and accessible author initials.
 - Added: Theme Palette Editor with sanitized per-theme overrides, reset controls, and JSON import/export.
+- Added: Per-theme local font-pairing picker with system-only stacks and immediate CSS application.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 
