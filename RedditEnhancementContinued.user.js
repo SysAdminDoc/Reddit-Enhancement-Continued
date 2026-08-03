@@ -2909,6 +2909,43 @@
         },
         videoHosts: ['v.redd.it', 'gfycat.com', 'redgifs.com', 'streamable.com'],
 
+        parseGalleryImages(post) {
+            const items = Array.isArray(post?.gallery_data?.items) ? post.gallery_data.items : [];
+            const metadata = post?.media_metadata && typeof post.media_metadata === 'object'
+                ? post.media_metadata
+                : {};
+
+            return items.map(item => {
+                const meta = metadata[item.media_id];
+                if (!meta) return null;
+
+                // Reddit normally exposes the original image as `s`, but older
+                // responses sometimes only include the largest preview entry.
+                const source = meta.s || meta.o || meta.p?.[meta.p.length - 1];
+                const url = source?.u || source?.gif || source?.mp4;
+                if (!url) return null;
+
+                return {
+                    url: url.replace(/&amp;/g, '&'),
+                    width: Number(source.x || source.width || 0),
+                    height: Number(source.y || source.height || 0),
+                    caption: typeof item.caption === 'string' ? item.caption.trim() : ''
+                };
+            }).filter(Boolean);
+        },
+
+        getGalleryIndex(index, delta, length) {
+            if (!Number.isInteger(length) || length < 1) return 0;
+            return (index + delta + length) % length;
+        },
+
+        preloadGalleryImage(image) {
+            if (!image?.url || typeof Image !== 'function') return;
+            const preload = new Image();
+            preload.decoding = 'async';
+            preload.src = image.url;
+        },
+
         init() {
             if (!settings.inlineImageExpansion) return;
             this.process(document);
@@ -2950,6 +2987,7 @@
         toggleExpand(thing, url, type, btn) {
             const existing = thing.querySelector('.rel-media-expando');
             if (existing) {
+                existing._relGalleryCleanup?.();
                 existing.remove();
                 btn.textContent = type === 'gallery' ? '[+gallery]' : (type === 'image' ? '[+img]' : '[+vid]');
                 return;
@@ -3026,35 +3064,25 @@
                 const post = data?.data?.children?.[0]?.data;
                 if (!post) throw new Error('No post data');
 
-                const galleryData = post.gallery_data?.items || [];
-                const mediaMetadata = post.media_metadata || {};
-
-                if (galleryData.length === 0) throw new Error('No gallery items');
-
-                const images = galleryData.map(item => {
-                    const meta = mediaMetadata[item.media_id];
-                    if (!meta) return null;
-                    // Get the highest resolution source
-                    const src = meta.s;
-                    if (!src) return null;
-                    return {
-                        url: (src.u || src.gif || '').replace(/&amp;/g, '&'),
-                        width: src.x,
-                        height: src.y,
-                        caption: item.caption || ''
-                    };
-                }).filter(Boolean);
+                const images = this.parseGalleryImages(post);
 
                 if (images.length === 0) throw new Error('No images found');
 
                 container.innerHTML = '';
                 let currentIdx = 0;
 
+                const move = (delta) => {
+                    currentIdx = this.getGalleryIndex(currentIdx, delta, images.length);
+                    updateView();
+                };
+
                 const viewer = document.createElement('div');
-                viewer.style.cssText = 'position:relative;text-align:center;';
+                viewer.tabIndex = 0;
+                viewer.setAttribute('role', 'region');
+                viewer.setAttribute('aria-label', 'Gallery viewer. Use the left and right arrow keys to navigate.');
+                viewer.style.cssText = 'position:relative;text-align:center;outline:none;';
 
                 const img = document.createElement('img');
-                img.src = images[0].url;
                 img.style.cssText = 'max-width:100%;max-height:600px;border-radius:6px;cursor:pointer;';
                 img.addEventListener('click', () => window.open(images[currentIdx].url, '_blank'));
                 viewer.appendChild(img);
@@ -3062,30 +3090,56 @@
                 const counter = document.createElement('div');
                 counter.style.cssText = `font-size:12px;color:${t.fgMuted};padding:6px 0;display:flex;align-items:center;justify-content:center;gap:12px;`;
 
+                const label = document.createElement('span');
+                label.setAttribute('aria-live', 'polite');
+
+                const dimensions = document.createElement('span');
+                dimensions.className = 'rel-gallery-dimensions';
+                dimensions.style.opacity = '0.8';
+
                 const updateView = () => {
-                    img.src = images[currentIdx].url;
-                    label.textContent = `${currentIdx + 1} / ${images.length}${images[currentIdx].caption ? ' - ' + images[currentIdx].caption : ''}`;
+                    const image = images[currentIdx];
+                    img.src = image.url;
+                    img.alt = image.caption || `Gallery image ${currentIdx + 1} of ${images.length}`;
+                    label.textContent = `${currentIdx + 1} / ${images.length}${image.caption ? ' - ' + image.caption : ''}`;
+                    dimensions.textContent = image.width > 0 && image.height > 0
+                        ? `${image.width} × ${image.height}`
+                        : '';
+                    this.preloadGalleryImage(images[this.getGalleryIndex(currentIdx, 1, images.length)]);
+                    this.preloadGalleryImage(images[this.getGalleryIndex(currentIdx, -1, images.length)]);
                 };
 
                 const prevBtn = document.createElement('button');
+                prevBtn.type = 'button';
                 prevBtn.textContent = '\u25C0 Prev';
                 prevBtn.style.cssText = `padding:4px 10px;border-radius:4px;cursor:pointer;border:1px solid ${t.border};background:${t.surface};color:${t.fg};font-size:12px;`;
-                prevBtn.addEventListener('click', () => { currentIdx = (currentIdx - 1 + images.length) % images.length; updateView(); });
-
-                const label = document.createElement('span');
-                label.textContent = `1 / ${images.length}`;
+                prevBtn.addEventListener('click', () => move(-1));
 
                 const nextBtn = document.createElement('button');
+                nextBtn.type = 'button';
                 nextBtn.textContent = 'Next \u25B6';
                 nextBtn.style.cssText = prevBtn.style.cssText;
-                nextBtn.addEventListener('click', () => { currentIdx = (currentIdx + 1) % images.length; updateView(); });
+                nextBtn.addEventListener('click', () => move(1));
+
+                const keyHandler = (event) => {
+                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                    const target = event.target;
+                    if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    move(event.key === 'ArrowLeft' ? -1 : 1);
+                };
+                document.addEventListener('keydown', keyHandler, true);
+                container._relGalleryCleanup = () => document.removeEventListener('keydown', keyHandler, true);
 
                 counter.appendChild(prevBtn);
                 counter.appendChild(label);
+                counter.appendChild(dimensions);
                 counter.appendChild(nextBtn);
 
                 container.appendChild(viewer);
                 container.appendChild(counter);
+                updateView();
             } catch (e) {
                 container.innerHTML = `<div style="padding:8px;color:${t.fgDim};font-size:12px;">Gallery could not be loaded. <a href="${Utils.escapeHTML(thing.getAttribute('data-url') || '#')}" target="_blank" style="color:${t.accent};">Open on Reddit</a></div>`;
             }
@@ -5830,6 +5884,13 @@
             siteTable.insertBefore(bar, siteTable.firstChild);
         }
     };
+
+    if (window.__REC_TEST_HOOKS__) {
+        Object.assign(window.__REC_TEST_HOOKS__, {
+            parseGalleryImages: ImageExpansionModule.parseGalleryImages.bind(ImageExpansionModule),
+            getGalleryIndex: ImageExpansionModule.getGalleryIndex.bind(ImageExpansionModule)
+        });
+    }
 
     function initModules() {
         // Apply body classes
