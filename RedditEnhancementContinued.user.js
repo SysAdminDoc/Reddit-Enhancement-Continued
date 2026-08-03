@@ -7320,6 +7320,7 @@
             buildRefreshUrl: CommentRefreshModule.buildRefreshUrl.bind(CommentRefreshModule),
             formatQuote: QuoteSelectionModule.formatQuote.bind(QuoteSelectionModule),
             extractSpoilerText: SpoilerTagModule.extractSpoilerText.bind(SpoilerTagModule),
+            renderMarkdown: FormattingToolbarModule.renderMarkdown.bind(FormattingToolbarModule),
             normalizeUserTag,
             mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
             getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
@@ -7476,6 +7477,10 @@
             const textarea = formWrapper.querySelector('textarea');
             const saveBtn = formWrapper.querySelector('.rel-reply-save');
             const cancelBtn = formWrapper.querySelector('.rel-reply-cancel');
+
+            // Native reply forms are created after initial module startup; run
+            // the same formatter path so toolbar and live preview are present.
+            Utils.processNewContent(formWrapper);
 
             textarea.focus();
 
