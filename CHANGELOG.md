@@ -21,6 +21,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Markdown preview and formatting controls to dynamically inserted native reply forms.
 - Added: Persistent Saved Searches & Filters menu with safe URL normalization and reusable filter presets.
 - Added: Credential-free multi-reddit builder for named combined subreddit feeds with local persistence.
+- Added: Session-scoped thread tabs that remember comment links across reloads with close and clear controls.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

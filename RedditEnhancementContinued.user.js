@@ -148,6 +148,7 @@
             trendingSubreddits: false,
             savedViewsMenu: true,
             multiRedditBuilder: true,
+            sessionTabs: true,
             // Migration flag (skip v2.2.1 migration for new installs)
             _migratedV221: true
         }
@@ -2234,6 +2235,7 @@
                     { key: 'subredditShortcuts', label: 'Subreddit Shortcuts', desc: 'Custom subreddit shortcut bar' },
                     { key: 'savedViewsMenu', label: 'Saved Searches & Filters', desc: 'Show a header menu for saved searches and filter presets' },
                     { key: 'multiRedditBuilder', label: 'Multi-Reddit Builder', desc: 'Build and save combined subreddit feeds locally' },
+                    { key: 'sessionTabs', label: 'Session Tabs', desc: 'Remember open comment threads across reloads in this browser session' },
                     { key: 'oldRedditRedirect', label: 'Old Reddit Redirect', desc: 'Redirect to old.reddit.com automatically' },
                     { key: 'scrollToTopOnNav', label: 'Scroll to Top', desc: 'Scroll to top when navigating pages' },
                     { key: 'nerPauseAfterPages', label: 'NER Pause After Pages', desc: 'Pause infinite scroll after N pages (0 = never)', type: 'number', min: 0, max: 50 },
@@ -7211,6 +7213,132 @@
     };
 
     // =========================================================================
+    // SESSION TABS MODULE
+    // =========================================================================
+    const SessionTabsModule = {
+        STORAGE_KEY: 'rel_session_tabs_v1',
+        tabs: [],
+        bar: null,
+
+        getThreadId(url) {
+            try {
+                const parsed = new URL(String(url || ''), 'https://old.reddit.com');
+                const match = parsed.pathname.match(/\/comments\/([A-Za-z0-9]+)(?:\/|$)/i);
+                return match ? match[1].toLowerCase() : null;
+            } catch {
+                return null;
+            }
+        },
+
+        normalizeTab(tab) {
+            if (!tab || typeof tab !== 'object' || Array.isArray(tab)) return null;
+            let url;
+            try {
+                const parsed = new URL(String(tab.url || ''), 'https://old.reddit.com');
+                if (!/^https?:$/.test(parsed.protocol) || !/(^|\.)reddit\.com$/i.test(parsed.hostname)) return null;
+                if (!parsed.pathname.includes('/comments/')) return null;
+                url = parsed.pathname + parsed.search + parsed.hash;
+            } catch {
+                return null;
+            }
+            const id = this.getThreadId(url);
+            if (!id) return null;
+            return {
+                id,
+                url,
+                title: String(tab.title || `Thread ${id}`).trim().slice(0, 120) || `Thread ${id}`,
+                openedAt: Number.isFinite(Number(tab.openedAt)) ? Number(tab.openedAt) : Date.now(),
+                lastViewedAt: Number.isFinite(Number(tab.lastViewedAt)) ? Number(tab.lastViewedAt) : Date.now()
+            };
+        },
+
+        read() {
+            try {
+                const raw = sessionStorage.getItem(this.STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed.map(tab => this.normalizeTab(tab)).filter(Boolean).slice(-20) : [];
+            } catch {
+                return [];
+            }
+        },
+
+        write() {
+            try { sessionStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.tabs.slice(-20))); } catch {}
+        },
+
+        currentThread() {
+            const id = this.getThreadId(window.location.href || window.location.pathname);
+            if (!id) return null;
+            const title = document.querySelector('.thing.link.self .title, .linklisting .thing.self .title, .commentarea .thing.link .title')?.textContent?.trim();
+            return this.normalizeTab({ id, url: window.location.pathname + window.location.search + window.location.hash, title: title || `Thread ${id}` });
+        },
+
+        add(tab) {
+            const normalized = this.normalizeTab(tab);
+            if (!normalized) return false;
+            const existing = this.tabs.find(item => item.id === normalized.id);
+            const next = existing ? { ...existing, ...normalized, openedAt: existing.openedAt, lastViewedAt: Date.now() } : normalized;
+            this.tabs = [...this.tabs.filter(item => item.id !== normalized.id), next].slice(-20);
+            this.write();
+            this.render();
+            return true;
+        },
+
+        close(id) {
+            const before = this.tabs.length;
+            this.tabs = this.tabs.filter(tab => tab.id !== id);
+            if (before === this.tabs.length) return false;
+            this.write();
+            this.render();
+            return true;
+        },
+
+        clear() {
+            this.tabs = [];
+            this.write();
+            this.render();
+        },
+
+        init() {
+            if (!settings.sessionTabs) return;
+            this.tabs = this.read();
+            const current = this.currentThread();
+            if (current) this.add(current);
+            document.addEventListener('click', event => {
+                const link = event.target.closest?.('a[href*="/comments/"]');
+                if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                this.add({ url: link.href, title: link.textContent?.trim() || undefined });
+            }, true);
+            this.render();
+        },
+
+        render() {
+            if (this.bar) this.bar.remove();
+            const host = document.querySelector('#header') || document.querySelector('#sr-header-area') || document.body;
+            if (!host || this.tabs.length === 0) return;
+            const bar = Utils.createElement('div', {
+                className: 'rel-session-tabs',
+                style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', padding: '4px 8px', borderTop: '1px solid rgba(128,128,128,0.25)', borderBottom: '1px solid rgba(128,128,128,0.25)', fontSize: '11px' }
+            });
+            const label = Utils.createElement('span', { textContent: 'Threads:', style: { opacity: '0.65', marginRight: '2px' } });
+            bar.appendChild(label);
+            const currentId = this.getThreadId(window.location.href || window.location.pathname);
+            this.tabs.forEach(tab => {
+                const wrapper = Utils.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', maxWidth: '260px', border: '1px solid rgba(128,128,128,0.35)', borderRadius: '4px', overflow: 'hidden' } });
+                const link = Utils.createElement('a', { href: tab.url, textContent: tab.title, title: tab.url, style: { padding: '3px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: tab.id === currentId ? '700' : '400' } });
+                wrapper.appendChild(link);
+                const close = Utils.createElement('button', { type: 'button', textContent: '\u00D7', title: 'Close thread tab', style: { border: '0', background: 'transparent', cursor: 'pointer', padding: '2px 5px' }, onClick: event => { event.preventDefault(); event.stopPropagation(); this.close(tab.id); } });
+                wrapper.appendChild(close);
+                bar.appendChild(wrapper);
+            });
+            const clear = Utils.createElement('button', { type: 'button', textContent: 'clear', title: 'Clear session tabs', style: { border: '0', background: 'transparent', cursor: 'pointer', padding: '3px 5px', opacity: '0.7' }, onClick: event => { event.preventDefault(); this.clear(); } });
+            bar.appendChild(clear);
+            host.appendChild(bar);
+            this.bar = bar;
+        }
+    };
+
+    // =========================================================================
     // SAVED SEARCHES & FILTERS MODULE
     // =========================================================================
     const SavedViewsModule = {
@@ -7740,6 +7868,8 @@
             normalizeSubreddit: MultiRedditModule.normalizeSubreddit.bind(MultiRedditModule),
             normalizeMultiReddit: MultiRedditModule.normalizeMultiReddit.bind(MultiRedditModule),
             buildMultiRedditUrl: MultiRedditModule.buildUrl.bind(MultiRedditModule),
+            getThreadId: SessionTabsModule.getThreadId.bind(SessionTabsModule),
+            normalizeSessionTab: SessionTabsModule.normalizeTab.bind(SessionTabsModule),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });
@@ -7762,6 +7892,7 @@
             SubredditShortcutsModule.init();
             SavedViewsModule.init();
             MultiRedditModule.init();
+            SessionTabsModule.init();
             SubredditDescriptionModule.init();
 
         // Content modules
