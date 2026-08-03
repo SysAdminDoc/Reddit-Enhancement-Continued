@@ -71,7 +71,8 @@
             voteWeights: 'rel_vote_weights',
             commentMacros: 'rel_comment_macros',
             settingsBackup: 'rel_backup',
-            savedViews: 'rel_saved_views_v1'
+            savedViews: 'rel_saved_views_v1',
+            multiReddits: 'rel_multireddits_v1'
         },
         defaults: {
             // Core
@@ -146,6 +147,7 @@
             notificationRedirect: true,
             trendingSubreddits: false,
             savedViewsMenu: true,
+            multiRedditBuilder: true,
             // Migration flag (skip v2.2.1 migration for new installs)
             _migratedV221: true
         }
@@ -260,6 +262,8 @@
     ]);
     let savedViews = Storage.get(CONFIG.storageKeys.savedViews, []);
     if (!Array.isArray(savedViews)) savedViews = [];
+    let multiReddits = Storage.get(CONFIG.storageKeys.multiReddits, []);
+    if (!Array.isArray(multiReddits)) multiReddits = [];
 
     function saveSettings() { Storage.set(CONFIG.storageKeys.settings, settings); }
     function saveUserTags() { Storage.set(CONFIG.storageKeys.userTags, userTags); }
@@ -270,6 +274,7 @@
     function saveShortcuts() { Storage.set(CONFIG.storageKeys.subredditShortcuts, subredditShortcuts); }
     function saveMacros() { Storage.set(CONFIG.storageKeys.commentMacros, commentMacros); }
     function saveSavedViews() { Storage.set(CONFIG.storageKeys.savedViews, savedViews); }
+    function saveMultiReddits() { Storage.set(CONFIG.storageKeys.multiReddits, multiReddits); }
 
     // =========================================================================
     // OLD REDDIT REDIRECT
@@ -2228,6 +2233,7 @@
                     { key: 'pageNavigator', label: 'Page Navigator', desc: 'Floating scroll-to-top/bottom buttons' },
                     { key: 'subredditShortcuts', label: 'Subreddit Shortcuts', desc: 'Custom subreddit shortcut bar' },
                     { key: 'savedViewsMenu', label: 'Saved Searches & Filters', desc: 'Show a header menu for saved searches and filter presets' },
+                    { key: 'multiRedditBuilder', label: 'Multi-Reddit Builder', desc: 'Build and save combined subreddit feeds locally' },
                     { key: 'oldRedditRedirect', label: 'Old Reddit Redirect', desc: 'Redirect to old.reddit.com automatically' },
                     { key: 'scrollToTopOnNav', label: 'Scroll to Top', desc: 'Scroll to top when navigating pages' },
                     { key: 'nerPauseAfterPages', label: 'NER Pause After Pages', desc: 'Pause infinite scroll after N pages (0 = never)', type: 'number', min: 0, max: 50 },
@@ -7430,6 +7436,165 @@
     };
 
     // =========================================================================
+    // MULTI-REDDIT BUILDER MODULE
+    // =========================================================================
+    const MultiRedditModule = {
+        overlay: null,
+
+        normalizeSubreddit(value) {
+            const name = String(value || '').trim().replace(/^\/r\//i, '').replace(/^r\//i, '');
+            return /^[A-Za-z0-9_][A-Za-z0-9_\-]{1,49}$/.test(name) ? name : null;
+        },
+
+        normalizeMultiReddit(item, index = 0) {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+            const subreddits = Array.isArray(item.subreddits)
+                ? [...new Set(item.subreddits.map(value => this.normalizeSubreddit(value)).filter(Boolean))].slice(0, 50)
+                : [];
+            if (subreddits.length === 0) return null;
+            const sort = ['hot', 'new', 'top', 'rising', 'controversial'].includes(item.sort) ? item.sort : 'hot';
+            const fallbackName = subreddits.slice(0, 3).join(' + ');
+            return {
+                id: String(item.id || `multi-${index + 1}`).slice(0, 120),
+                name: String(item.name || fallbackName).trim().slice(0, 80) || fallbackName,
+                subreddits,
+                sort,
+                createdAt: Number.isFinite(Number(item.createdAt)) ? Number(item.createdAt) : Date.now(),
+                updatedAt: Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now()
+            };
+        },
+
+        buildUrl(subreddits, sort = 'hot') {
+            const names = (Array.isArray(subreddits) ? subreddits : String(subreddits || '').split(/[+,\s]+/))
+                .map(value => this.normalizeSubreddit(value)).filter(Boolean);
+            if (names.length === 0) return '/';
+            const url = `/r/${[...new Set(names)].join('+')}/`;
+            return sort && sort !== 'hot' ? `${url}?sort=${encodeURIComponent(sort)}` : url;
+        },
+
+        init() {
+            if (!settings.multiRedditBuilder) return;
+            multiReddits = multiReddits.map((item, index) => this.normalizeMultiReddit(item, index)).filter(Boolean).slice(-30);
+            saveMultiReddits();
+            const userbar = document.querySelector('#header-bottom-right');
+            if (!userbar || userbar.querySelector('.rel-multi-reddit-wrap')) return;
+            const wrapper = Utils.createElement('span', {
+                className: 'rel-multi-reddit-wrap',
+                style: { display: 'inline-block', marginRight: '6px' }
+            });
+            const button = Utils.createElement('button', {
+                className: 'rel-multi-reddit-btn',
+                textContent: '\u2637 multi',
+                title: 'Build a combined subreddit feed',
+                type: 'button',
+                style: { cursor: 'pointer', border: '0', background: 'transparent', color: 'inherit', padding: '2px 4px' },
+                onClick: event => { event.preventDefault(); this.showBuilder(); }
+            });
+            wrapper.appendChild(button);
+            userbar.prepend(wrapper);
+            GM_registerMenuCommand('REC Multi-Reddit Builder', () => this.showBuilder());
+        },
+
+        makeButton(label, action, theme) {
+            return Utils.createElement('button', {
+                type: 'button', textContent: label,
+                style: { cursor: 'pointer', padding: '5px 8px', border: `1px solid ${theme.border}`, borderRadius: '4px', background: theme.surface, color: theme.fg },
+                onClick: event => { event.preventDefault(); action(); }
+            });
+        },
+
+        showBuilder(editItem = null) {
+            if (this.overlay) this.overlay.remove();
+            const t = Themes.getTheme();
+            const overlay = Utils.createElement('div', {
+                className: 'rel-multi-reddit-overlay',
+                style: { position: 'fixed', inset: '0', zIndex: '100001', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }
+            });
+            const panel = Utils.createElement('div', {
+                className: 'rel-multi-reddit-panel',
+                style: { width: '520px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '16px', border: `1px solid ${t.border}`, borderRadius: '8px', background: t.bgLight, color: t.fg, boxShadow: `0 10px 40px ${t.shadow || 'rgba(0,0,0,0.4)'}` }
+            });
+            const title = Utils.createElement('h2', { textContent: editItem ? 'Edit multi-reddit' : 'Multi-reddit builder', style: { margin: '0 0 6px' } });
+            panel.appendChild(title);
+            panel.appendChild(Utils.createElement('p', { textContent: 'Combine subreddits into one old Reddit feed. Enter one name per line or separate names with +.', style: { margin: '0 0 12px', color: t.fgDim, fontSize: '12px' } }));
+
+            const name = Utils.createElement('input', { type: 'text', className: 'rel-input', placeholder: 'Name, e.g. Tech reading', value: editItem?.name || '', style: { width: '100%', boxSizing: 'border-box', marginBottom: '8px' } });
+            const subreddits = Utils.createElement('textarea', { className: 'rel-input', placeholder: 'technology\nprogramming\nopensource', style: { width: '100%', minHeight: '110px', boxSizing: 'border-box', marginBottom: '8px' } });
+            subreddits.value = editItem?.subreddits?.join('\n') || '';
+            const sort = Utils.createElement('select', { className: 'rel-input', style: { width: '100%', boxSizing: 'border-box', marginBottom: '12px' } });
+            ['hot', 'new', 'top', 'rising', 'controversial'].forEach(value => {
+                const option = Utils.createElement('option', { value, textContent: value });
+                if ((editItem?.sort || 'hot') === value) option.selected = true;
+                sort.appendChild(option);
+            });
+            panel.appendChild(Utils.createElement('label', { textContent: 'Name', style: { display: 'block', marginBottom: '4px', fontSize: '12px' } }));
+            panel.appendChild(name);
+            panel.appendChild(Utils.createElement('label', { textContent: 'Subreddits', style: { display: 'block', marginBottom: '4px', fontSize: '12px' } }));
+            panel.appendChild(subreddits);
+            panel.appendChild(Utils.createElement('label', { textContent: 'Sort order', style: { display: 'block', marginBottom: '4px', fontSize: '12px' } }));
+            panel.appendChild(sort);
+
+            const formActions = Utils.createElement('div', { style: { display: 'flex', gap: '6px', justifyContent: 'flex-end', marginBottom: '16px' } });
+            formActions.appendChild(this.makeButton('Cancel', () => this.close(), t));
+            formActions.appendChild(this.makeButton(editItem ? 'Update' : 'Save', () => {
+                const parsed = this.normalizeMultiReddit({
+                    id: editItem?.id,
+                    name: name.value,
+                    subreddits: subreddits.value.split(/[+,\s]+/),
+                    sort: sort.value,
+                    createdAt: editItem?.createdAt,
+                    updatedAt: Date.now()
+                });
+                if (!parsed) {
+                    Utils.notify('Add at least one valid subreddit (letters, numbers, _ or -).', 'warning');
+                    return;
+                }
+                this.save(parsed);
+                this.showBuilder();
+            }, t));
+            panel.appendChild(formActions);
+
+            const heading = Utils.createElement('h3', { textContent: 'Saved feeds', style: { margin: '0 0 8px' } });
+            panel.appendChild(heading);
+            const list = Utils.createElement('div', { style: { display: 'grid', gap: '6px' } });
+            if (multiReddits.length === 0) list.appendChild(Utils.createElement('div', { textContent: 'No feeds saved yet.', style: { color: t.fgDim, fontSize: '12px' } }));
+            multiReddits.slice().reverse().forEach(item => {
+                const row = Utils.createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', padding: '7px', border: `1px solid ${t.border}`, borderRadius: '4px' } });
+                const label = Utils.createElement('span', { textContent: `${item.name} · ${item.subreddits.join(' + ')}`, title: item.subreddits.join(', ') });
+                label.style.cssText = 'min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;';
+                row.appendChild(label);
+                row.appendChild(this.makeButton('open', () => { window.location.href = this.buildUrl(item.subreddits, item.sort); }, t));
+                row.appendChild(this.makeButton('edit', () => this.showBuilder(item), t));
+                row.appendChild(this.makeButton('\u00D7', () => { this.remove(item.id); this.showBuilder(); }, t));
+                list.appendChild(row);
+            });
+            panel.appendChild(list);
+            overlay.appendChild(panel);
+            overlay.addEventListener('click', event => { if (event.target === overlay) this.close(); });
+            document.body.appendChild(overlay);
+            this.overlay = overlay;
+            document.addEventListener('keydown', this.escapeHandler = event => { if (event.key === 'Escape') this.close(); }, { once: true });
+            name.focus();
+        },
+
+        close() {
+            if (this.overlay) this.overlay.remove();
+            this.overlay = null;
+        },
+
+        save(item) {
+            multiReddits = [...multiReddits.filter(existing => existing.id !== item.id && existing.name.toLowerCase() !== item.name.toLowerCase()), item].slice(-30);
+            saveMultiReddits();
+            Utils.notify(`Saved multi-reddit "${item.name}"`, 'success');
+        },
+
+        remove(id) {
+            multiReddits = multiReddits.filter(item => item.id !== id);
+            saveMultiReddits();
+        }
+    };
+
+    // =========================================================================
     // COMMENT QUOTE SELECTION MODULE
     // =========================================================================
     const QuoteSelectionModule = {
@@ -7572,6 +7737,9 @@
             normalizeSavedView: SavedViewsModule.normalizeView.bind(SavedViewsModule),
             normalizeFilterSnapshot: SavedViewsModule.normalizeFilterSnapshot.bind(SavedViewsModule),
             buildSearchUrl: SavedViewsModule.buildSearchUrl.bind(SavedViewsModule),
+            normalizeSubreddit: MultiRedditModule.normalizeSubreddit.bind(MultiRedditModule),
+            normalizeMultiReddit: MultiRedditModule.normalizeMultiReddit.bind(MultiRedditModule),
+            buildMultiRedditUrl: MultiRedditModule.buildUrl.bind(MultiRedditModule),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });
@@ -7593,6 +7761,7 @@
             PageNavigatorModule.init();
             SubredditShortcutsModule.init();
             SavedViewsModule.init();
+            MultiRedditModule.init();
             SubredditDescriptionModule.init();
 
         // Content modules
