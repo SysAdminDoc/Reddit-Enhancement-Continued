@@ -402,6 +402,7 @@
             if (settings.expandContinueThread) ExpandThreadModule.process(container);
             if (settings.voteEnhancements) VoteEnhancementsModule.process(container);
             if (settings.formattingToolbar) FormattingToolbarModule.process(container);
+            if (settings.formattingToolbar) QuoteSelectionModule.process(container);
             if (settings.selectedEntryHighlight) SelectedEntryModule.process(container);
             if (settings.postFiltering) FilterModule.process(container);
             if (settings.noParticipation) NoParticipationModule.process(container);
@@ -7160,6 +7161,79 @@
         }
     };
 
+    // =========================================================================
+    // COMMENT QUOTE SELECTION MODULE
+    // =========================================================================
+    const QuoteSelectionModule = {
+        init() {
+            if (!settings.formattingToolbar) return;
+            this.process(document);
+        },
+
+        formatQuote(text) {
+            const value = String(text || '').trim();
+            return value ? value.split(/\r?\n/).map(line => `> ${line}`).join('\n') : '';
+        },
+
+        getSelectedText(comment) {
+            const selection = window.getSelection?.();
+            if (!selection || selection.isCollapsed || !selection.rangeCount) return '';
+            const anchor = selection.anchorNode;
+            const focus = selection.focusNode;
+            if (!anchor || !focus || !comment.contains(anchor) || !comment.contains(focus)) return '';
+            return selection.toString().trim();
+        },
+
+        insertIntoTextarea(text, comment) {
+            const textarea = comment.querySelector('textarea') || document.querySelector('.rel-reply-form textarea:focus, .usertext-edit textarea:focus');
+            if (!textarea) return false;
+            const start = Number.isInteger(textarea.selectionStart) ? textarea.selectionStart : textarea.value.length;
+            const end = Number.isInteger(textarea.selectionEnd) ? textarea.selectionEnd : start;
+            const prefix = textarea.value && start > 0 && !textarea.value.slice(0, start).endsWith('\n') ? '\n' : '';
+            textarea.setRangeText(`${prefix}${text}\n`, start, end, 'end');
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.focus();
+            return true;
+        },
+
+        process(container) {
+            if (!settings.formattingToolbar) return;
+            container.querySelectorAll('.comment:not([data-rel-quote])').forEach(comment => {
+                comment.setAttribute('data-rel-quote', '1');
+                const buttons = comment.querySelector(':scope > .entry .flat-list.buttons');
+                if (!buttons) return;
+                const item = Utils.createElement('li', { className: 'rel-quote-button' });
+                const link = Utils.createElement('a', {
+                    href: 'javascript:void(0)', textContent: 'quote', title: 'Quote selected comment text as Markdown'
+                });
+                let pendingSelection = '';
+                link.addEventListener('mousedown', event => {
+                    pendingSelection = this.getSelectedText(comment);
+                    event.preventDefault();
+                });
+                link.addEventListener('click', event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const quote = this.formatQuote(pendingSelection || this.getSelectedText(comment));
+                    pendingSelection = '';
+                    if (!quote) {
+                        Utils.notify('Select comment text before choosing quote', 'info');
+                        return;
+                    }
+                    if (this.insertIntoTextarea(quote, comment)) {
+                        Utils.notify('Quote inserted', 'success');
+                    } else if (Utils.copyToClipboard(quote)) {
+                        Utils.notify('Quote copied to clipboard', 'success');
+                    } else {
+                        Utils.notify('Could not insert or copy quote', 'error');
+                    }
+                });
+                item.appendChild(link);
+                buttons.appendChild(item);
+            });
+        }
+    };
+
     if (window.__REC_TEST_HOOKS__) {
         Object.assign(window.__REC_TEST_HOOKS__, {
             parseGalleryImages: ImageExpansionModule.parseGalleryImages.bind(ImageExpansionModule),
@@ -7175,6 +7249,7 @@
             extractTweetId: SocialMediaPreviewModule.extractTweetId.bind(SocialMediaPreviewModule),
             selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule),
             buildRefreshUrl: CommentRefreshModule.buildRefreshUrl.bind(CommentRefreshModule),
+            formatQuote: QuoteSelectionModule.formatQuote.bind(QuoteSelectionModule),
             mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
             getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
             testRegexRule: FilterModule.testRegexRule.bind(FilterModule),
@@ -7221,6 +7296,7 @@
         CommentHighlightingModule.init();
         CommentDepthModule.init();
         FormattingToolbarModule.init();
+        QuoteSelectionModule.init();
         ExpandThreadModule.init();
         HideAutoModeratorModule.init();
         IgnoredUsersModule.init();

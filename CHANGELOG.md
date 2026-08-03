@@ -15,6 +15,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Comment Sweep controls for persistent bulk tagging or hiding of matching loaded comment history.
 - Added: Opt-in explainable low-effort title heuristic using configurable length, uppercase, and emoji signals.
 - Added: Opt-in live comment refresh with new-comment insertion, processing, highlight dismissal, and interval control.
+- Added: Per-comment citation quote action that formats selected text as Markdown blockquotes and inserts or copies it.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 
