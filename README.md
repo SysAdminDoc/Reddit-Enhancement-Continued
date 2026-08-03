@@ -70,6 +70,10 @@ Every theme provides full coverage across all Reddit elements — headers, sideb
 - **Keyboard Navigation** — Navigate posts/comments with `j`/`k`, vote with `a`/`z`, expand with `x`, open with `Enter`
 - **Page Navigator** — Floating scroll-to-top/bottom buttons
 - **Subreddit Shortcuts** — Custom shortcut bar for quick subreddit access
+- **Saved Searches & Filters** — Save search URLs and reusable filter presets in a header menu
+- **Multi-Reddit Builder** — Build named combined subreddit feeds locally without an API key
+- **Session Tabs** — Keep comment threads available across reloads for the current browser session
+- **Inbox Mark All Read** — Queue all old Reddit inbox messages as read from the message page
 - **Old Reddit Redirect** — Automatically redirects `www.reddit.com` to `old.reddit.com`
 - **Notification Redirect** — Redirects to `sh.reddit.com/notifications` (which actually works on old Reddit)
 - **State Saver** — Preserves scroll position when navigating back from posts
@@ -113,11 +117,14 @@ All settings are accessible from the **⚙** gear icon in the bottom-right corne
 | **Content** | Media embedding, image expansion, timestamps, user info, view counters, vote estimates |
 | **Comments** | Highlighting, depth indicators, child collapse, formatting toolbar, bot hiding |
 | **Navigation** | Infinite scroll, keyboard nav, shortcuts, redirects, state saver |
+| **Sync** | Optional AES-GCM encrypted snapshots to a private Gist, Pastebin, or WebDAV file |
 | **Filtering** | Keyword/domain/subreddit/flair/user filters, regex, NSFW toggle, ignore list |
 | **Privacy** | No participation mode, ad blocker |
 | **Backup** | Export/import all settings, tags, filters, and macros as JSON |
 
 Changes auto-save. Some settings (like theme switching and button hiding) apply instantly; others require a page reload.
+
+Cloud sync is disabled by default. Choose a provider in the **Sync** tab, enter only your own endpoint and provider credential, and supply the encryption passphrase when uploading or downloading. The passphrase is never stored and provider credentials are excluded from encrypted snapshots.
 
 ---
 

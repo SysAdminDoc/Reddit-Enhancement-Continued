@@ -44,6 +44,8 @@
 // @connect      old.reddit.com
 // @connect      www.reddit.com
 // @connect      api.reddit.com
+// @connect      api.github.com
+// @connect      pastebin.com
 // @run-at       document-start
 // @icon         https://b.thumbs.redditmedia.com/JeP1WF0kEiiH1gT8vOr_7kFAwIlHzRBHjLDZIkQP61Q.jpg
 // @downloadURL  https://github.com/SysAdminDoc/Reddit-Enhancement-Continued/raw/refs/heads/main/RedditEnhancementContinued.user.js
@@ -146,6 +148,10 @@
             userPrefix: true,
             notificationRedirect: true,
             trendingSubreddits: false,
+            syncProvider: 'none',
+            syncEndpoint: '',
+            syncUsername: '',
+            syncToken: '',
             savedViewsMenu: true,
             multiRedditBuilder: true,
             sessionTabs: true,
@@ -2167,6 +2173,7 @@
                 { id: 'navigation', label: 'Navigation' },
                 { id: 'filtering', label: 'Filtering' },
                 { id: 'privacy', label: 'Privacy' },
+                { id: 'sync', label: 'Sync' },
                 { id: 'backup', label: 'Backup' }
             ];
 
@@ -2259,6 +2266,9 @@
                     { key: 'noParticipation', label: 'No Participation', desc: 'Enforce NP mode on np.reddit.com links' },
                     { type: 'ignoredUsers' }
                 ],
+                sync: [
+                    { type: 'sync' }
+                ],
                 backup: [
                     { type: 'backupRestore' }
                 ]
@@ -2309,6 +2319,8 @@
                         content.appendChild(this.buildCommentSweep());
                     } else if (def.type === 'backupRestore') {
                         content.appendChild(this.buildBackupRestore());
+                    } else if (def.type === 'sync') {
+                        content.appendChild(this.buildSyncSettings());
                     } else if (def.type === 'ignoredUsers') {
                         content.appendChild(this.buildIgnoredUsers());
                     } else if (def.type === 'textarea') {
@@ -3055,6 +3067,82 @@
             return section;
         },
 
+        buildSyncSettings() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Encrypted Cloud Sync</h3><div class="rel-setting-desc" style="margin-bottom:10px;">Sync an encrypted settings snapshot to your own Gist, Pastebin paste, or WebDAV file. The passphrase is requested for each operation and never stored.</div>';
+
+            const provider = Utils.createElement('select', { className: 'rel-select', style: { width: '100%', marginBottom: '8px' } });
+            [
+                { value: 'none', label: 'Disabled' },
+                { value: 'gist', label: 'GitHub Gist' },
+                { value: 'pastebin', label: 'Pastebin' },
+                { value: 'webdav', label: 'WebDAV (CORS required)' }
+            ].forEach(option => {
+                const node = Utils.createElement('option', { value: option.value, textContent: option.label });
+                if (settings.syncProvider === option.value) node.selected = true;
+                provider.appendChild(node);
+            });
+
+            const endpoint = Utils.createElement('input', { type: 'url', className: 'rel-input', placeholder: 'Gist ID, paste URL, or WebDAV file URL', style: { width: '100%', boxSizing: 'border-box', marginBottom: '8px' } });
+            endpoint.value = settings.syncEndpoint || '';
+            const username = Utils.createElement('input', { type: 'text', className: 'rel-input', placeholder: 'WebDAV username (optional)', style: { width: '100%', boxSizing: 'border-box', marginBottom: '8px' } });
+            username.value = settings.syncUsername || '';
+            const token = Utils.createElement('input', { type: 'password', className: 'rel-input', placeholder: 'GitHub token / Pastebin API key / WebDAV password', style: { width: '100%', boxSizing: 'border-box', marginBottom: '8px' } });
+            token.value = settings.syncToken || '';
+
+            const field = (label, input) => {
+                const wrapper = Utils.createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '4px' } });
+                wrapper.appendChild(Utils.createElement('span', { textContent: label, style: { display: 'block', marginBottom: '3px' } }));
+                wrapper.appendChild(input);
+                return wrapper;
+            };
+            section.appendChild(field('Provider', provider));
+            section.appendChild(field('Endpoint', endpoint));
+            section.appendChild(field('Username', username));
+            section.appendChild(field('Token / password', token));
+
+            const status = Utils.createElement('div', { textContent: 'No sync operation has run.', style: { minHeight: '18px', margin: '8px 0', fontSize: '11px', opacity: '0.75' } });
+            const save = () => {
+                settings.syncProvider = provider.value;
+                settings.syncEndpoint = endpoint.value.trim();
+                settings.syncUsername = username.value.trim();
+                settings.syncToken = token.value;
+                saveSettings();
+            };
+            [provider, endpoint, username, token].forEach(input => input.addEventListener('change', save));
+
+            const operation = async (kind) => {
+                save();
+                const passphrase = prompt(`Enter the encryption passphrase to ${kind} settings:`);
+                if (!passphrase) return;
+                status.textContent = kind === 'upload' ? 'Encrypting and uploading...' : 'Downloading and decrypting...';
+                try {
+                    if (kind === 'upload') {
+                        const result = await SyncModule.upload(passphrase);
+                        if (result?.endpoint) {
+                            endpoint.value = result.endpoint;
+                            save();
+                        }
+                        status.textContent = 'Encrypted snapshot uploaded.';
+                        Utils.notify('Encrypted settings synced', 'success');
+                    } else {
+                        await SyncModule.download(passphrase);
+                        status.textContent = 'Snapshot decrypted. Reload to apply imported settings.';
+                        Utils.notify('Encrypted settings downloaded; reload to apply', 'success');
+                    }
+                } catch (error) {
+                    status.textContent = error.message || 'Sync failed.';
+                    Utils.notify(status.textContent, 'error');
+                }
+            };
+            const actions = Utils.createElement('div', { style: { display: 'flex', gap: '6px', marginTop: '4px' } });
+            actions.appendChild(Utils.createElement('button', { className: 'rel-btn-small rel-btn-primary', textContent: 'Upload encrypted', type: 'button', onClick: () => operation('upload') }));
+            actions.appendChild(Utils.createElement('button', { className: 'rel-btn-small rel-btn-secondary', textContent: 'Download encrypted', type: 'button', onClick: () => operation('download') }));
+            section.appendChild(status);
+            section.appendChild(actions);
+            return section;
+        },
+
         applyThemeCSS() {
             // Remove old theme styles
             document.querySelectorAll('[data-rel-theme]').forEach(el => el.remove());
@@ -3084,6 +3172,272 @@
                 style3.textContent = uxCSS;
                 document.head.appendChild(style3);
             }
+        }
+    };
+
+    // =========================================================================
+    // ENCRYPTED CLOUD SYNC MODULE
+    // =========================================================================
+    const SyncModule = {
+        PREFIX: 'REC-SYNC-1.',
+        FILE_NAME: 'reddit-enhancement-continued.sync',
+        PBKDF2_ITERATIONS: 210000,
+
+        getCrypto() {
+            const cryptoApi = window.crypto || (typeof crypto !== 'undefined' ? crypto : null);
+            if (!cryptoApi?.subtle || !cryptoApi.getRandomValues) throw new Error('Web Crypto is unavailable in this browser');
+            return cryptoApi;
+        },
+
+        getTextEncoder() {
+            const Encoder = window.TextEncoder || (typeof TextEncoder !== 'undefined' ? TextEncoder : null);
+            if (!Encoder) throw new Error('Text encoding is unavailable in this browser');
+            return new Encoder();
+        },
+
+        getTextDecoder() {
+            const Decoder = window.TextDecoder || (typeof TextDecoder !== 'undefined' ? TextDecoder : null);
+            if (!Decoder) throw new Error('Text decoding is unavailable in this browser');
+            return new Decoder();
+        },
+
+        toBase64(bytes) {
+            const encoder = window.btoa || (typeof btoa !== 'undefined' ? btoa : null);
+            if (!encoder) throw new Error('Base64 encoding is unavailable in this browser');
+            let binary = '';
+            for (const byte of bytes) binary += String.fromCharCode(byte);
+            return encoder(binary);
+        },
+
+        fromBase64(value) {
+            const decoder = window.atob || (typeof atob !== 'undefined' ? atob : null);
+            if (!decoder) throw new Error('Base64 decoding is unavailable in this browser');
+            const binary = decoder(value);
+            return Uint8Array.from(binary, character => character.charCodeAt(0));
+        },
+
+        async deriveKey(passphrase, salt, usages) {
+            const cryptoApi = this.getCrypto();
+            const base = await cryptoApi.subtle.importKey('raw', this.getTextEncoder().encode(passphrase), { name: 'PBKDF2' }, false, ['deriveKey']);
+            return cryptoApi.subtle.deriveKey(
+                { name: 'PBKDF2', salt, iterations: this.PBKDF2_ITERATIONS, hash: 'SHA-256' },
+                base,
+                { name: 'AES-GCM', length: 256 },
+                false,
+                usages
+            );
+        },
+
+        createSnapshot() {
+            const data = JSON.parse(Storage.exportAll());
+            if (data.settings && typeof data.settings === 'object') {
+                delete data.settings.syncProvider;
+                delete data.settings.syncEndpoint;
+                delete data.settings.syncUsername;
+                delete data.settings.syncToken;
+            }
+            return { schema: 1, exportedAt: new Date().toISOString(), data };
+        },
+
+        async encryptSnapshot(passphrase, snapshot = this.createSnapshot()) {
+            if (!String(passphrase || '')) throw new Error('An encryption passphrase is required');
+            const cryptoApi = this.getCrypto();
+            const salt = cryptoApi.getRandomValues(new Uint8Array(16));
+            const iv = cryptoApi.getRandomValues(new Uint8Array(12));
+            const key = await this.deriveKey(String(passphrase), salt, ['encrypt']);
+            const plaintext = this.getTextEncoder().encode(JSON.stringify(snapshot));
+            const ciphertext = await cryptoApi.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+            return this.PREFIX + JSON.stringify({
+                v: 1,
+                iterations: this.PBKDF2_ITERATIONS,
+                salt: this.toBase64(salt),
+                iv: this.toBase64(iv),
+                data: this.toBase64(new Uint8Array(ciphertext))
+            });
+        },
+
+        async decryptSnapshot(serialized, passphrase) {
+            if (!String(passphrase || '')) throw new Error('An encryption passphrase is required');
+            const source = String(serialized || '');
+            if (!source.startsWith(this.PREFIX)) throw new Error('Unsupported sync payload');
+            let envelope;
+            try { envelope = JSON.parse(source.slice(this.PREFIX.length)); } catch { throw new Error('Invalid sync payload'); }
+            if (envelope.v !== 1 || !envelope.salt || !envelope.iv || !envelope.data) throw new Error('Incomplete sync payload');
+            if (Number(envelope.iterations) !== this.PBKDF2_ITERATIONS) throw new Error('Unsupported sync encryption parameters');
+            const cryptoApi = this.getCrypto();
+            const key = await this.deriveKey(String(passphrase), this.fromBase64(envelope.salt), ['decrypt']);
+            let plaintext;
+            try {
+                plaintext = await cryptoApi.subtle.decrypt({ name: 'AES-GCM', iv: this.fromBase64(envelope.iv) }, key, this.fromBase64(envelope.data));
+            } catch {
+                throw new Error('Could not decrypt sync payload; check the passphrase');
+            }
+            let snapshot;
+            try { snapshot = JSON.parse(this.getTextDecoder().decode(plaintext)); } catch { throw new Error('Decrypted sync payload is not valid JSON'); }
+            if (!snapshot || snapshot.schema !== 1 || !snapshot.data || typeof snapshot.data !== 'object') throw new Error('Invalid decrypted settings snapshot');
+            return snapshot;
+        },
+
+        restoreSnapshot(snapshot) {
+            const imported = { ...snapshot.data };
+            const currentSettings = Storage.get(CONFIG.storageKeys.settings, { ...CONFIG.defaults });
+            if (imported.settings && typeof imported.settings === 'object') {
+                imported.settings = {
+                    ...currentSettings,
+                    ...imported.settings,
+                    syncProvider: settings.syncProvider,
+                    syncEndpoint: settings.syncEndpoint,
+                    syncUsername: settings.syncUsername,
+                    syncToken: settings.syncToken
+                };
+            }
+            Storage.importAll(JSON.stringify(imported));
+        },
+
+        normalizeProvider(provider) {
+            return ['gist', 'pastebin', 'webdav'].includes(String(provider || '').toLowerCase()) ? String(provider).toLowerCase() : 'none';
+        },
+
+        getGistId(endpoint) {
+            const value = String(endpoint || '').trim();
+            if (!value) return '';
+            if (/^[A-Za-z0-9]+$/.test(value)) return value;
+            try {
+                const parsed = new URL(value);
+                const match = parsed.pathname.match(/\/gists\/([A-Za-z0-9]+)/i);
+                return match ? match[1] : '';
+            } catch { return ''; }
+        },
+
+        getPasteRawUrl(endpoint) {
+            const value = String(endpoint || '').trim();
+            if (/^[A-Za-z0-9]+$/.test(value)) return `https://pastebin.com/raw/${value}`;
+            try {
+                const parsed = new URL(value);
+                if (!/(^|\.)pastebin\.com$/i.test(parsed.hostname)) return '';
+                const match = parsed.pathname.match(/\/raw\/([A-Za-z0-9]+)|\/([A-Za-z0-9]+)$/i);
+                const id = match?.[1] || match?.[2];
+                return id ? `https://pastebin.com/raw/${id}` : '';
+            } catch { return ''; }
+        },
+
+        getWebDavUrl(endpoint) {
+            try {
+                const parsed = new URL(String(endpoint || '').trim());
+                return /^https?:$/.test(parsed.protocol) ? parsed.href : '';
+            } catch { return ''; }
+        },
+
+        request(provider, url, options = {}) {
+            const method = options.method || 'GET';
+            const headers = options.headers || {};
+            const body = options.body || null;
+            if (provider === 'webdav') {
+                return fetch(url, { method, headers, body, credentials: 'omit' }).then(async response => ({
+                    status: response.status, ok: response.ok, text: await response.text()
+                }));
+            }
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method, url, headers, data: body || undefined,
+                    onload: response => resolve({ status: response.status, ok: response.status >= 200 && response.status < 300, text: response.responseText || '' }),
+                    onerror: () => reject(new Error('Cloud provider request failed')),
+                    ontimeout: () => reject(new Error('Cloud provider request timed out'))
+                });
+            });
+        },
+
+        authHeaders(provider) {
+            const headers = {};
+            if (provider === 'gist') {
+                if (settings.syncToken) headers.Authorization = `Bearer ${settings.syncToken}`;
+                headers.Accept = 'application/vnd.github+json';
+            } else if (provider === 'webdav' && (settings.syncUsername || settings.syncToken)) {
+                headers.Authorization = `Basic ${this.toBase64(this.getTextEncoder().encode(`${settings.syncUsername}:${settings.syncToken}`))}`;
+            }
+            return headers;
+        },
+
+        parseResponse(response, fallback = 'Cloud provider rejected the request') {
+            if (response.ok) return response;
+            let detail = '';
+            try { detail = JSON.parse(response.text).message || ''; } catch {}
+            throw new Error(detail || `${fallback} (HTTP ${response.status})`);
+        },
+
+        async upload(passphrase) {
+            const provider = this.normalizeProvider(settings.syncProvider);
+            if (provider === 'none') throw new Error('Choose a sync provider first');
+            const encrypted = await this.encryptSnapshot(passphrase);
+            if (encrypted.length > 10 * 1024 * 1024) throw new Error('Encrypted snapshot exceeds the 10 MB sync limit');
+
+            if (provider === 'gist') {
+                if (!settings.syncToken) throw new Error('A GitHub token is required to upload a Gist');
+                const id = this.getGistId(settings.syncEndpoint);
+                const url = id ? `https://api.github.com/gists/${id}` : 'https://api.github.com/gists';
+                const response = await this.request(provider, url, {
+                    method: id ? 'PATCH' : 'POST',
+                    headers: { ...this.authHeaders(provider), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ description: 'Reddit Enhancement Continued encrypted settings', public: false, files: { [this.FILE_NAME]: { content: encrypted } } })
+                });
+                this.parseResponse(response);
+                let result;
+                try { result = JSON.parse(response.text); } catch { result = {}; }
+                return { endpoint: result.id || id };
+            }
+
+            if (provider === 'pastebin') {
+                if (!settings.syncToken) throw new Error('A Pastebin API key is required to upload a paste');
+                const body = new URLSearchParams({
+                    api_dev_key: settings.syncToken,
+                    api_option: 'paste',
+                    api_paste_code: encrypted,
+                    api_paste_private: '1',
+                    api_paste_expire_date: 'N'
+                });
+                const response = await this.request(provider, 'https://pastebin.com/api/api_post.php', {
+                    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
+                });
+                this.parseResponse(response);
+                if (!/^https:\/\/pastebin\.com\/[A-Za-z0-9]+$/i.test(response.text.trim())) throw new Error(response.text.trim() || 'Pastebin did not return a paste URL');
+                return { endpoint: response.text.trim() };
+            }
+
+            const url = this.getWebDavUrl(settings.syncEndpoint);
+            if (!url) throw new Error('A valid WebDAV file URL is required');
+            const response = await this.request(provider, url, {
+                method: 'PUT', headers: { ...this.authHeaders(provider), 'Content-Type': 'text/plain; charset=UTF-8' }, body: encrypted
+            });
+            this.parseResponse(response);
+            return { endpoint: url };
+        },
+
+        async download(passphrase) {
+            const provider = this.normalizeProvider(settings.syncProvider);
+            if (provider === 'none') throw new Error('Choose a sync provider first');
+            let response;
+            if (provider === 'gist') {
+                const id = this.getGistId(settings.syncEndpoint);
+                if (!id) throw new Error('A Gist ID or Gist URL is required');
+                response = await this.request(provider, `https://api.github.com/gists/${id}`, { headers: this.authHeaders(provider) });
+                this.parseResponse(response);
+                let gist;
+                try { gist = JSON.parse(response.text); } catch { throw new Error('GitHub returned invalid Gist data'); }
+                const file = gist.files?.[this.FILE_NAME];
+                if (!file) throw new Error('The Gist does not contain an REC sync file');
+                if (file.truncated && file.raw_url) response = await this.request(provider, file.raw_url, { headers: this.authHeaders(provider) });
+                else return this.restoreSnapshot(await this.decryptSnapshot(file.content, passphrase));
+            } else if (provider === 'pastebin') {
+                const url = this.getPasteRawUrl(settings.syncEndpoint);
+                if (!url) throw new Error('A Pastebin URL or paste ID is required');
+                response = await this.request(provider, url);
+            } else {
+                const url = this.getWebDavUrl(settings.syncEndpoint);
+                if (!url) throw new Error('A valid WebDAV file URL is required');
+                response = await this.request(provider, url, { headers: this.authHeaders(provider) });
+            }
+            this.parseResponse(response);
+            this.restoreSnapshot(await this.decryptSnapshot(response.text, passphrase));
         }
     };
 
@@ -7948,6 +8302,13 @@
             normalizeSessionTab: SessionTabsModule.normalizeTab.bind(SessionTabsModule),
             isMessagePath: InboxReadModule.isMessagePath.bind(InboxReadModule),
             buildMarkAllReadBody: InboxReadModule.buildRequestBody.bind(InboxReadModule),
+            normalizeSyncProvider: SyncModule.normalizeProvider.bind(SyncModule),
+            getGistId: SyncModule.getGistId.bind(SyncModule),
+            getPasteRawUrl: SyncModule.getPasteRawUrl.bind(SyncModule),
+            getWebDavUrl: SyncModule.getWebDavUrl.bind(SyncModule),
+            createSyncSnapshot: SyncModule.createSnapshot.bind(SyncModule),
+            encryptSyncSnapshot: SyncModule.encryptSnapshot.bind(SyncModule),
+            decryptSyncSnapshot: SyncModule.decryptSnapshot.bind(SyncModule),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });
