@@ -19,6 +19,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Persistent per-user private notes in the existing tag records, with popup editing and user-info/hover display.
 - Added: Opt-in `>!...!<` spoiler parsing for comments and live Markdown preview with click-to-reveal behavior.
 - Added: Markdown preview and formatting controls to dynamically inserted native reply forms.
+- Added: Persistent Saved Searches & Filters menu with safe URL normalization and reusable filter presets.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

@@ -70,7 +70,8 @@
             ignoredUsers: 'rel_ignored_users',
             voteWeights: 'rel_vote_weights',
             commentMacros: 'rel_comment_macros',
-            settingsBackup: 'rel_backup'
+            settingsBackup: 'rel_backup',
+            savedViews: 'rel_saved_views_v1'
         },
         defaults: {
             // Core
@@ -144,6 +145,7 @@
             userPrefix: true,
             notificationRedirect: true,
             trendingSubreddits: false,
+            savedViewsMenu: true,
             // Migration flag (skip v2.2.1 migration for new installs)
             _migratedV221: true
         }
@@ -256,6 +258,8 @@
         { name: 'Table Flip', text: '(' + String.fromCharCode(9583) + String.fromCharCode(176) + String.fromCharCode(9633) + String.fromCharCode(176) + ')' + String.fromCharCode(9583) + String.fromCharCode(65077) + ' ' + String.fromCharCode(9531) + String.fromCharCode(9473) + String.fromCharCode(9531) },
         { name: 'Disapproval', text: String.fromCharCode(3232) + '_' + String.fromCharCode(3232) }
     ]);
+    let savedViews = Storage.get(CONFIG.storageKeys.savedViews, []);
+    if (!Array.isArray(savedViews)) savedViews = [];
 
     function saveSettings() { Storage.set(CONFIG.storageKeys.settings, settings); }
     function saveUserTags() { Storage.set(CONFIG.storageKeys.userTags, userTags); }
@@ -265,6 +269,7 @@
     function saveVoteWeights() { Storage.set(CONFIG.storageKeys.voteWeights, voteWeights); }
     function saveShortcuts() { Storage.set(CONFIG.storageKeys.subredditShortcuts, subredditShortcuts); }
     function saveMacros() { Storage.set(CONFIG.storageKeys.commentMacros, commentMacros); }
+    function saveSavedViews() { Storage.set(CONFIG.storageKeys.savedViews, savedViews); }
 
     // =========================================================================
     // OLD REDDIT REDIRECT
@@ -2222,6 +2227,7 @@
                     { key: 'keyboardNav', label: 'Keyboard Navigation', desc: 'Navigate with j/k, vote with a/z' },
                     { key: 'pageNavigator', label: 'Page Navigator', desc: 'Floating scroll-to-top/bottom buttons' },
                     { key: 'subredditShortcuts', label: 'Subreddit Shortcuts', desc: 'Custom subreddit shortcut bar' },
+                    { key: 'savedViewsMenu', label: 'Saved Searches & Filters', desc: 'Show a header menu for saved searches and filter presets' },
                     { key: 'oldRedditRedirect', label: 'Old Reddit Redirect', desc: 'Redirect to old.reddit.com automatically' },
                     { key: 'scrollToTopOnNav', label: 'Scroll to Top', desc: 'Scroll to top when navigating pages' },
                     { key: 'nerPauseAfterPages', label: 'NER Pause After Pages', desc: 'Pause infinite scroll after N pages (0 = never)', type: 'number', min: 0, max: 50 },
@@ -4769,6 +4775,15 @@
             }
         },
 
+        refresh() {
+            document.querySelectorAll('.thing.link[data-rel-filtered]').forEach(thing => {
+                thing.removeAttribute('data-rel-filtered');
+                thing.removeAttribute('data-rel-hidden');
+                thing.style.display = '';
+            });
+            this.process(document);
+        },
+
         shouldFilter(data) {
             const activeFilters = this.getEffectiveFilters(data.subreddit);
             if (activeFilters.enabled === false) return false;
@@ -7190,6 +7205,231 @@
     };
 
     // =========================================================================
+    // SAVED SEARCHES & FILTERS MODULE
+    // =========================================================================
+    const SavedViewsModule = {
+        menu: null,
+        button: null,
+
+        normalizeFilterSnapshot(snapshot) {
+            const source = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot : {};
+            const copy = { useRegex: !!source.useRegex, hideNSFW: !!source.hideNSFW, hideVisited: !!source.hideVisited };
+            ['keywords', 'domains', 'subreddits', 'flairs', 'users'].forEach(key => {
+                copy[key] = Array.isArray(source[key])
+                    ? [...new Set(source[key].map(value => String(value || '').trim()).filter(Boolean))].slice(0, 500)
+                    : [];
+            });
+            copy.regexGroups = Array.isArray(source.regexGroups) ? source.regexGroups
+                .filter(rule => rule && typeof rule === 'object')
+                .map((rule, index) => ({
+                    id: String(rule.id || `regex-${index + 1}`).slice(0, 120),
+                    name: String(rule.name || `Rule ${index + 1}`).trim().slice(0, 120),
+                    pattern: String(rule.pattern || '').slice(0, 500),
+                    flags: String(rule.flags || 'i').replace(/[^dgimsuvy]/g, ''),
+                    enabled: rule.enabled !== false
+                }))
+                .filter(rule => rule.pattern)
+                .slice(0, 200) : [];
+            return copy;
+        },
+
+        normalizeView(view, index = 0) {
+            if (!view || typeof view !== 'object' || Array.isArray(view)) return null;
+            const kind = view.kind === 'filter' ? 'filter' : 'search';
+            let url = '';
+            try {
+                const parsed = new URL(String(view.url || '/'), 'https://old.reddit.com');
+                if (!/^https?:$/.test(parsed.protocol) || !/(^|\.)reddit\.com$/i.test(parsed.hostname)) return null;
+                url = parsed.pathname + parsed.search + parsed.hash;
+            } catch {
+                return null;
+            }
+            const fallbackName = kind === 'search' ? 'Saved search' : 'Saved filters';
+            return {
+                id: String(view.id || `saved-${index + 1}`).slice(0, 120),
+                name: String(view.name || fallbackName).trim().slice(0, 100) || fallbackName,
+                kind,
+                url,
+                filters: kind === 'filter' ? this.normalizeFilterSnapshot(view.filters) : null,
+                createdAt: Number.isFinite(Number(view.createdAt)) ? Number(view.createdAt) : Date.now(),
+                updatedAt: Number.isFinite(Number(view.updatedAt)) ? Number(view.updatedAt) : Date.now()
+            };
+        },
+
+        buildSearchUrl(query) {
+            const value = String(query || '').trim();
+            if (!value) return '/search';
+            const url = new URL('/search', 'https://old.reddit.com');
+            url.searchParams.set('q', value);
+            return url.pathname + url.search;
+        },
+
+        getCurrentSearch() {
+            const params = new URLSearchParams(window.location.search || '');
+            const query = params.get('q')?.trim();
+            if (!query) return null;
+            return {
+                name: `Search: ${query}`.slice(0, 100),
+                url: window.location.pathname + window.location.search + window.location.hash
+            };
+        },
+
+        init() {
+            if (!settings.savedViewsMenu) return;
+            savedViews = savedViews.map((view, index) => this.normalizeView(view, index)).filter(Boolean).slice(-50);
+            saveSavedViews();
+            const userbar = document.querySelector('#header-bottom-right');
+            if (!userbar || userbar.querySelector('.rel-saved-views-wrap')) return;
+
+            const wrapper = Utils.createElement('span', {
+                className: 'rel-saved-views-wrap',
+                style: { position: 'relative', display: 'inline-block', marginRight: '6px' }
+            });
+            this.button = Utils.createElement('button', {
+                className: 'rel-saved-views-btn',
+                textContent: '\u2605 saved',
+                title: 'Saved searches and filters',
+                type: 'button',
+                style: { cursor: 'pointer', border: '0', background: 'transparent', color: 'inherit', padding: '2px 4px' },
+                onClick: event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.toggleMenu(wrapper);
+                }
+            });
+            wrapper.appendChild(this.button);
+            userbar.prepend(wrapper);
+            document.addEventListener('click', event => {
+                if (this.menu && !wrapper.contains(event.target)) this.closeMenu();
+            });
+        },
+
+        closeMenu() {
+            if (this.menu) this.menu.remove();
+            this.menu = null;
+        },
+
+        toggleMenu(wrapper) {
+            if (this.menu) {
+                this.closeMenu();
+                return;
+            }
+            const t = Themes.getTheme();
+            const menu = Utils.createElement('div', {
+                className: 'rel-saved-views-menu',
+                style: {
+                    position: 'absolute', top: '24px', right: '0', width: '310px', maxWidth: '90vw',
+                    zIndex: '100000', padding: '10px', border: `1px solid ${t.border}`,
+                    borderRadius: '6px', background: t.bgLight, color: t.fg,
+                    boxShadow: `0 5px 20px ${t.shadow || 'rgba(0,0,0,0.35)'}`
+                }
+            });
+            const title = Utils.createElement('strong', { textContent: 'Saved searches & filters' });
+            title.style.display = 'block';
+            title.style.marginBottom = '8px';
+            menu.appendChild(title);
+
+            const actions = Utils.createElement('div', { style: { display: 'flex', gap: '5px', marginBottom: '8px' } });
+            const currentSearch = this.getCurrentSearch();
+            if (currentSearch) actions.appendChild(this.makeActionButton('Save search', () => this.saveSearch(currentSearch)));
+            actions.appendChild(this.makeActionButton('Save filters', () => this.saveFilters()));
+            menu.appendChild(actions);
+
+            if (savedViews.length === 0) {
+                menu.appendChild(Utils.createElement('div', { textContent: 'Nothing saved yet.', style: { color: t.fgDim, fontSize: '12px' } }));
+            } else {
+                const list = Utils.createElement('div', { style: { display: 'grid', gap: '5px', maxHeight: '300px', overflowY: 'auto' } });
+                [...savedViews].reverse().forEach(view => list.appendChild(this.renderView(view, t)));
+                menu.appendChild(list);
+            }
+            this.menu = menu;
+            wrapper.appendChild(menu);
+        },
+
+        makeActionButton(label, action) {
+            return Utils.createElement('button', {
+                type: 'button', textContent: label,
+                style: { flex: '1', cursor: 'pointer', padding: '4px 6px', border: '1px solid currentColor', borderRadius: '4px', background: 'transparent', color: 'inherit' },
+                onClick: event => { event.preventDefault(); action(); }
+            });
+        },
+
+        renderView(view, theme) {
+            const row = Utils.createElement('div', { style: { display: 'flex', gap: '5px', alignItems: 'center', padding: '5px', border: `1px solid ${theme.border}`, borderRadius: '4px' } });
+            const label = Utils.createElement('span', { textContent: `${view.kind === 'filter' ? '\u2699' : '\u2315'} ${view.name}`, title: view.url });
+            label.style.cssText = 'min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;';
+            row.appendChild(label);
+            row.appendChild(Utils.createElement('button', {
+                type: 'button', textContent: 'open', title: view.kind === 'filter' ? 'Apply filter preset' : 'Open saved search',
+                style: { cursor: 'pointer', padding: '2px 5px' },
+                onClick: event => { event.preventDefault(); this.apply(view); }
+            }));
+            row.appendChild(Utils.createElement('button', {
+                type: 'button', textContent: '\u00D7', title: 'Delete saved view',
+                style: { cursor: 'pointer', padding: '2px 5px' },
+                onClick: event => { event.preventDefault(); this.remove(view.id); }
+            }));
+            return row;
+        },
+
+        saveSearch(current = this.getCurrentSearch()) {
+            if (!current) return false;
+            const name = (prompt('Name this saved search:', current.name) || '').trim().slice(0, 100);
+            if (!name) return false;
+            this.add({ name, kind: 'search', url: current.url });
+            return true;
+        },
+
+        saveFilters() {
+            const name = (prompt('Name this filter preset:', 'Saved filters') || '').trim().slice(0, 100);
+            if (!name) return false;
+            this.add({ name, kind: 'filter', url: window.location.pathname || '/', filters: this.normalizeFilterSnapshot(filters) });
+            return true;
+        },
+
+        add(view) {
+            const normalized = this.normalizeView({ ...view, id: `saved-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: Date.now(), updatedAt: Date.now() }, savedViews.length);
+            if (!normalized) return false;
+            savedViews = [...savedViews.filter(existing => existing.name.toLowerCase() !== normalized.name.toLowerCase()), normalized].slice(-50);
+            saveSavedViews();
+            if (this.menu) {
+                const wrapper = this.menu.parentElement;
+                this.closeMenu();
+                if (wrapper) this.toggleMenu(wrapper);
+            }
+            Utils.notify(`Saved ${normalized.kind} "${normalized.name}"`, 'success');
+            return true;
+        },
+
+        apply(view) {
+            if (!view) return false;
+            if (view.kind === 'filter') {
+                filters = { ...filters, ...this.normalizeFilterSnapshot(view.filters) };
+                saveFilters();
+                FilterModule.refresh();
+                this.closeMenu();
+                Utils.notify(`Applied filter preset "${view.name}"`, 'success');
+            } else {
+                const normalized = this.normalizeView(view);
+                if (!normalized) return false;
+                window.location.href = normalized.url;
+            }
+            return true;
+        },
+
+        remove(id) {
+            const before = savedViews.length;
+            savedViews = savedViews.filter(view => view.id !== id);
+            if (savedViews.length === before) return false;
+            saveSavedViews();
+            const wrapper = this.menu?.parentElement;
+            this.closeMenu();
+            if (wrapper) this.toggleMenu(wrapper);
+            return true;
+        }
+    };
+
+    // =========================================================================
     // COMMENT QUOTE SELECTION MODULE
     // =========================================================================
     const QuoteSelectionModule = {
@@ -7329,6 +7569,9 @@
             isLowEffortTitle: FilterModule.isLowEffortTitle.bind(FilterModule),
             serializeBlockList: SettingsModule.serializeBlockList.bind(SettingsModule),
             parseBlockList: SettingsModule.parseBlockList.bind(SettingsModule),
+            normalizeSavedView: SavedViewsModule.normalizeView.bind(SavedViewsModule),
+            normalizeFilterSnapshot: SavedViewsModule.normalizeFilterSnapshot.bind(SavedViewsModule),
+            buildSearchUrl: SavedViewsModule.buildSearchUrl.bind(SavedViewsModule),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });
@@ -7346,10 +7589,11 @@
         // UI modules
         CollapsibleSidebarModule.init();
         OldFaviconModule.init();
-        SettingsModule.init();
-        PageNavigatorModule.init();
-        SubredditShortcutsModule.init();
-        SubredditDescriptionModule.init();
+            SettingsModule.init();
+            PageNavigatorModule.init();
+            SubredditShortcutsModule.init();
+            SavedViewsModule.init();
+            SubredditDescriptionModule.init();
 
         // Content modules
         UserTaggingModule.init();
