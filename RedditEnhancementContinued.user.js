@@ -29,6 +29,8 @@
 // @connect      gfycat.com
 // @connect      redgifs.com
 // @connect      streamable.com
+// @connect      api.streamable.com
+// @connect      api.redgifs.com
 // @connect      reddit.com
 // @connect      old.reddit.com
 // @connect      www.reddit.com
@@ -2908,6 +2910,190 @@
             }
         },
         videoHosts: ['v.redd.it', 'gfycat.com', 'redgifs.com', 'streamable.com'],
+        redgifsToken: null,
+        redgifsTokenExpiresAt: 0,
+        redgifsTokenPromise: null,
+
+        requestJSON(url, headers = {}) {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    headers: { Accept: 'application/json', ...headers },
+                    timeout: 15000,
+                    onload: (response) => {
+                        if (response.status < 200 || response.status >= 300) {
+                            const error = new Error(`Request failed with status ${response.status}`);
+                            error.status = response.status;
+                            reject(error);
+                            return;
+                        }
+                        try {
+                            resolve(JSON.parse(response.responseText));
+                        } catch (error) {
+                            reject(error);
+                        }
+                    },
+                    onerror: () => reject(new Error('Network request failed')),
+                    ontimeout: () => reject(new Error('Network request timed out'))
+                });
+            });
+        },
+
+        extractRedgifsId(url) {
+            const match = url.match(/redgifs\.com\/(?:watch|ifr|v)\/([a-z0-9]+)/i);
+            return match ? match[1] : null;
+        },
+
+        extractStreamableId(url) {
+            const match = url.match(/streamable\.com\/(?:e\/|o\/)?([a-z0-9]+)/i);
+            return match ? match[1] : null;
+        },
+
+        selectRedgifsMedia(payload) {
+            const gif = payload?.gif || payload?.data?.gif || payload?.data || payload;
+            const urls = gif?.urls || {};
+            const candidates = [
+                urls.hd, urls.sd, urls.file, urls.mp4,
+                gif?.hd, gif?.sd, gif?.file_url, gif?.url
+            ].filter(value => typeof value === 'string' && value.length > 0);
+            const url = candidates.find(value => /^https?:\/\//i.test(value));
+            if (!url) return null;
+            return {
+                url,
+                width: Number(gif.width || 0),
+                height: Number(gif.height || 0),
+                hasAudio: gif.hasAudio === true || gif.has_audio === true,
+                poster: urls.vthumbnail || urls.thumbnail || gif.thumbnail || ''
+            };
+        },
+
+        selectStreamableFile(payload) {
+            const files = payload?.files && typeof payload.files === 'object' ? payload.files : {};
+            const candidates = Object.entries(files)
+                .map(([format, file]) => ({ format, file }))
+                .filter(({ file }) => file && (!file.status || file.status === 2) && typeof file.url === 'string')
+                .map(({ format, file }) => ({
+                    url: file.url.startsWith('//') ? `https:${file.url}` : file.url,
+                    format,
+                    width: Number(file.width || 0),
+                    height: Number(file.height || 0),
+                    bitrate: Number(file.bitrate || 0),
+                    duration: Number(file.duration || 0)
+                }))
+                .filter(file => /^https?:\/\//i.test(file.url));
+
+            candidates.sort((a, b) => {
+                const resolution = (b.width * b.height) - (a.width * a.height);
+                return resolution || b.bitrate - a.bitrate;
+            });
+            return candidates[0] || null;
+        },
+
+        async getRedgifsToken(forceRefresh = false) {
+            if (!forceRefresh && this.redgifsToken && Date.now() < this.redgifsTokenExpiresAt) {
+                return this.redgifsToken;
+            }
+            if (this.redgifsTokenPromise) return this.redgifsTokenPromise;
+
+            this.redgifsTokenPromise = this.requestJSON('https://api.redgifs.com/v2/auth/temporary')
+                .then(data => {
+                    if (!data?.token) throw new Error('Redgifs token missing');
+                    this.redgifsToken = data.token;
+                    // Keep a safety margin because the API token lifetime is external state.
+                    this.redgifsTokenExpiresAt = Date.now() + 10 * 60 * 1000;
+                    return this.redgifsToken;
+                })
+                .finally(() => { this.redgifsTokenPromise = null; });
+            return this.redgifsTokenPromise;
+        },
+
+        async loadRedgifsVideo(id) {
+            let token = await this.getRedgifsToken();
+            try {
+                return this.selectRedgifsMedia(await this.requestJSON(
+                    `https://api.redgifs.com/v2/gifs/${encodeURIComponent(id)}`,
+                    { Authorization: `Bearer ${token}` }
+                ));
+            } catch (error) {
+                if (error.status !== 401) throw error;
+                token = await this.getRedgifsToken(true);
+                return this.selectRedgifsMedia(await this.requestJSON(
+                    `https://api.redgifs.com/v2/gifs/${encodeURIComponent(id)}`,
+                    { Authorization: `Bearer ${token}` }
+                ));
+            }
+        },
+
+        createVideoElement(media) {
+            const video = document.createElement('video');
+            video.controls = true;
+            video.loop = true;
+            video.playsInline = true;
+            video.preload = 'metadata';
+            video.style.cssText = 'display:block;width:100%;max-width:720px;max-height:600px;border-radius:6px;background:#000;';
+            if (media.width > 0) video.width = media.width;
+            if (media.height > 0) video.height = media.height;
+            if (media.poster) video.poster = media.poster;
+
+            const source = document.createElement('source');
+            source.src = media.url;
+            if (/\.m3u8(?:\?|$)/i.test(media.url)) source.type = 'application/vnd.apple.mpegurl';
+            else source.type = 'video/mp4';
+            video.appendChild(source);
+            return video;
+        },
+
+        async loadVideo(thing, container, url) {
+            const t = Themes.getTheme();
+            const loading = Utils.createElement('div', {
+                className: 'rel-media-loading',
+                textContent: 'Loading video...',
+                style: { padding: '10px', color: t.fgDim, fontSize: '12px' }
+            });
+            container.appendChild(loading);
+
+            try {
+                let media = null;
+                const redgifsId = this.extractRedgifsId(url);
+                if (redgifsId) {
+                    media = await this.loadRedgifsVideo(redgifsId);
+                } else {
+                    const streamableId = this.extractStreamableId(url);
+                    if (streamableId) {
+                        const data = await this.requestJSON(`https://api.streamable.com/videos/${encodeURIComponent(streamableId)}`);
+                        media = this.selectStreamableFile(data);
+                    }
+                }
+
+                if (media) {
+                    loading.remove();
+                    container.appendChild(this.createVideoElement(media));
+                    return;
+                }
+                throw new Error('No playable media URL');
+            } catch (error) {
+                loading.remove();
+                const streamableId = this.extractStreamableId(url);
+                if (streamableId) {
+                    const iframe = document.createElement('iframe');
+                    iframe.src = `https://streamable.com/o/${encodeURIComponent(streamableId)}`;
+                    iframe.style.cssText = 'width:100%;max-width:720px;height:405px;border:none;border-radius:6px;';
+                    iframe.setAttribute('allowfullscreen', '');
+                    iframe.setAttribute('loading', 'lazy');
+                    container.appendChild(iframe);
+                    return;
+                }
+
+                const link = document.createElement('a');
+                link.href = url;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = 'Open video on host';
+                link.style.color = t.accent;
+                container.appendChild(link);
+            }
+        },
 
         parseGalleryImages(post) {
             const items = Array.isArray(post?.gallery_data?.items) ? post.gallery_data.items : [];
@@ -3039,8 +3225,11 @@
                     iframe.setAttribute('allowfullscreen', '');
                     iframe.setAttribute('loading', 'lazy');
                     container.appendChild(iframe);
+                } else if (url.includes('redgifs.com') || url.includes('streamable.com')) {
+                    this.loadVideo(thing, container, url);
                 } else {
-                    container.innerHTML = `<video controls style="max-width:100%;max-height:500px;border-radius:4px;"><source src="${Utils.escapeHTML(url)}">Your browser does not support video.</video>`;
+                    const video = this.createVideoElement({ url });
+                    container.appendChild(video);
                 }
             } else if (type === 'gallery') {
                 this.loadGallery(thing, container);
@@ -5888,7 +6077,11 @@
     if (window.__REC_TEST_HOOKS__) {
         Object.assign(window.__REC_TEST_HOOKS__, {
             parseGalleryImages: ImageExpansionModule.parseGalleryImages.bind(ImageExpansionModule),
-            getGalleryIndex: ImageExpansionModule.getGalleryIndex.bind(ImageExpansionModule)
+            getGalleryIndex: ImageExpansionModule.getGalleryIndex.bind(ImageExpansionModule),
+            extractRedgifsId: ImageExpansionModule.extractRedgifsId.bind(ImageExpansionModule),
+            extractStreamableId: ImageExpansionModule.extractStreamableId.bind(ImageExpansionModule),
+            selectRedgifsMedia: ImageExpansionModule.selectRedgifsMedia.bind(ImageExpansionModule),
+            selectStreamableFile: ImageExpansionModule.selectStreamableFile.bind(ImageExpansionModule)
         });
     }
 
