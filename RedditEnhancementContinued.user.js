@@ -2482,7 +2482,127 @@
 
             section.appendChild(this.buildSubredditOverrides());
             section.appendChild(this.buildRegexGroupEditor());
+            section.appendChild(this.buildBlockListTools());
 
+            return section;
+        },
+
+        serializeBlockList(source = filters) {
+            const lines = ['# Reddit Enhancement Continued block list v1'];
+            const fields = [
+                ['keywords', 'keyword'], ['domains', 'domain'], ['subreddits', 'subreddit'],
+                ['flairs', 'flair'], ['users', 'user']
+            ];
+            fields.forEach(([field, prefix]) => {
+                (Array.isArray(source[field]) ? source[field] : []).forEach(value => {
+                    const clean = String(value).replace(/[\r\n]/g, ' ').trim();
+                    if (clean) lines.push(`${prefix}:${clean}`);
+                });
+            });
+            (Array.isArray(source.regexGroups) ? source.regexGroups : []).forEach(rule => {
+                const name = String(rule.name || 'Unnamed').replace(/[|\r\n]/g, ' ').trim();
+                const pattern = String(rule.pattern || '').replace(/[\r\n]/g, ' ');
+                const flags = String(rule.flags || 'i').replace(/[^dgimsuvy]/g, '');
+                if (name && pattern) lines.push(`regex:${name}|${pattern}|${flags}`);
+            });
+            return lines.join('\n') + '\n';
+        },
+
+        parseBlockList(text) {
+            const result = { keywords: [], domains: [], subreddits: [], flairs: [], users: [], regexGroups: [] };
+            const fields = {
+                keyword: 'keywords', domain: 'domains', subreddit: 'subreddits', flair: 'flairs', user: 'users'
+            };
+            String(text || '').split(/\r?\n/).forEach(rawLine => {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) return;
+                const separator = line.indexOf(':');
+                const prefix = separator > 0 ? line.slice(0, separator).toLowerCase() : '';
+                const value = separator > 0 ? line.slice(separator + 1).trim() : line;
+                if (!value) return;
+                if (fields[prefix]) {
+                    if (!result[fields[prefix]].includes(value)) result[fields[prefix]].push(value);
+                    return;
+                }
+                if (prefix === 'regex') {
+                    const parts = value.split('|');
+                    const name = parts.shift()?.trim();
+                    const flags = parts.pop()?.trim() || 'i';
+                    const pattern = parts.join('|');
+                    if (!name || !pattern) return;
+                    try { new RegExp(pattern, flags); }
+                    catch { return; }
+                    result.regexGroups.push({
+                        id: `regex-import-${result.regexGroups.length + 1}`,
+                        name, pattern, flags: flags.replace(/[^dgimsuvy]/g, ''), enabled: true, hits: 0
+                    });
+                    return;
+                }
+                if (!result.keywords.includes(line)) result.keywords.push(line);
+            });
+            return result;
+        },
+
+        buildBlockListTools() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Shared Block List</h3><div class="rel-setting-desc" style="margin-bottom:8px;">Plain text, one rule per line. Typed rules and unprefixed keywords are supported.</div>';
+            const row = Utils.createElement('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } });
+            const exportBtn = Utils.createElement('button', {
+                className: 'rel-btn-small rel-btn-secondary', textContent: 'Export .txt',
+                onClick: () => {
+                    const blob = new Blob([this.serializeBlockList()], { type: 'text/plain;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const anchor = document.createElement('a');
+                    anchor.href = url;
+                    anchor.download = `rel-block-list-${new Date().toISOString().slice(0, 10)}.txt`;
+                    anchor.click();
+                    URL.revokeObjectURL(url);
+                    Utils.notify('Block list exported', 'success');
+                }
+            });
+            const importBtn = Utils.createElement('button', {
+                className: 'rel-btn-small rel-btn-secondary', textContent: 'Import .txt',
+                onClick: () => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.txt,text/plain';
+                    input.addEventListener('change', () => {
+                        const file = input.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const imported = this.parseBlockList(reader.result);
+                            let count = 0;
+                            ['keywords', 'domains', 'subreddits', 'flairs', 'users'].forEach(field => {
+                                imported[field].forEach(value => {
+                                    if (!filters[field].includes(value)) { filters[field].push(value); count++; }
+                                });
+                            });
+                            imported.regexGroups.forEach(rule => {
+                                const duplicate = filters.regexGroups.some(existing =>
+                                    existing.name === rule.name && existing.pattern === rule.pattern && existing.flags === rule.flags
+                                );
+                                if (!duplicate) { filters.regexGroups.push(rule); count++; }
+                            });
+                            saveFilters();
+                            Utils.notify(`Imported ${count} block-list rules`, 'success');
+                        };
+                        reader.readAsText(file);
+                    });
+                    input.click();
+                }
+            });
+            const copyBtn = Utils.createElement('button', {
+                className: 'rel-btn-small rel-btn-secondary', textContent: 'Copy .txt',
+                onClick: () => {
+                    Utils.copyToClipboard(this.serializeBlockList());
+                    Utils.notify('Block list copied', 'success');
+                }
+            });
+            row.appendChild(exportBtn);
+            row.appendChild(importBtn);
+            row.appendChild(copyBtn);
+            section.appendChild(row);
             return section;
         },
 
@@ -6809,7 +6929,9 @@
             selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule),
             mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
             getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
-            testRegexRule: FilterModule.testRegexRule.bind(FilterModule)
+            testRegexRule: FilterModule.testRegexRule.bind(FilterModule),
+            serializeBlockList: SettingsModule.serializeBlockList.bind(SettingsModule),
+            parseBlockList: SettingsModule.parseBlockList.bind(SettingsModule)
         });
     }
 
