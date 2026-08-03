@@ -22,6 +22,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Persistent Saved Searches & Filters menu with safe URL normalization and reusable filter presets.
 - Added: Credential-free multi-reddit builder for named combined subreddit feeds with local persistence.
 - Added: Session-scoped thread tabs that remember comment links across reloads with close and clear controls.
+- Added: Inbox-only bulk "Mark all as read" action using Reddit's same-origin read-all endpoint with modhash protection.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

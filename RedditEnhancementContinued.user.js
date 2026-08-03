@@ -149,6 +149,7 @@
             savedViewsMenu: true,
             multiRedditBuilder: true,
             sessionTabs: true,
+            markAllAsRead: true,
             // Migration flag (skip v2.2.1 migration for new installs)
             _migratedV221: true
         }
@@ -2236,6 +2237,7 @@
                     { key: 'savedViewsMenu', label: 'Saved Searches & Filters', desc: 'Show a header menu for saved searches and filter presets' },
                     { key: 'multiRedditBuilder', label: 'Multi-Reddit Builder', desc: 'Build and save combined subreddit feeds locally' },
                     { key: 'sessionTabs', label: 'Session Tabs', desc: 'Remember open comment threads across reloads in this browser session' },
+                    { key: 'markAllAsRead', label: 'Inbox Mark All Read', desc: 'Add a bulk mark-as-read action to old Reddit message pages' },
                     { key: 'oldRedditRedirect', label: 'Old Reddit Redirect', desc: 'Redirect to old.reddit.com automatically' },
                     { key: 'scrollToTopOnNav', label: 'Scroll to Top', desc: 'Scroll to top when navigating pages' },
                     { key: 'nerPauseAfterPages', label: 'NER Pause After Pages', desc: 'Pause infinite scroll after N pages (0 = never)', type: 'number', min: 0, max: 50 },
@@ -7339,6 +7341,80 @@
     };
 
     // =========================================================================
+    // INBOX MARK-ALL-READ MODULE
+    // =========================================================================
+    const InboxReadModule = {
+        button: null,
+        isMessagePath(pathname = window.location.pathname) {
+            return String(pathname || '').startsWith('/message/');
+        },
+
+        getModhash() {
+            return document.querySelector('input[name="uh"]')?.value
+                || window.r?.config?.modhash
+                || (typeof unsafeWindow !== 'undefined' && unsafeWindow?.r?.config?.modhash)
+                || '';
+        },
+
+        buildRequestBody(modhash = '') {
+            const body = new URLSearchParams({ filter_types: '' });
+            if (modhash) body.set('uh', modhash);
+            return body.toString();
+        },
+
+        init() {
+            if (!settings.markAllAsRead || !this.isMessagePath()) return;
+            const host = document.querySelector('.messagepage .menuarea, .messagepage .menuarea .spacer, .menuarea');
+            if (!host || host.querySelector('.rel-mark-all-read')) return;
+            this.button = Utils.createElement('button', {
+                className: 'rel-mark-all-read rel-btn-small rel-btn-secondary',
+                textContent: 'Mark all as read',
+                type: 'button',
+                style: { marginLeft: '8px', cursor: 'pointer' },
+                onClick: () => this.markAll()
+            });
+            host.appendChild(this.button);
+        },
+
+        async markAll() {
+            if (!this.button || this.button.disabled) return false;
+            const original = this.button.textContent;
+            const modhash = this.getModhash();
+            if (!modhash) {
+                Utils.notify('Reddit did not expose a modhash; inbox was not changed.', 'warning');
+                return false;
+            }
+            this.button.disabled = true;
+            this.button.textContent = 'Marking...';
+            try {
+                const response = await fetch('/api/read_all_messages', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Modhash': modhash },
+                    body: this.buildRequestBody(modhash)
+                });
+                if (!response.ok && response.status !== 202) throw new Error(`HTTP ${response.status}`);
+                document.querySelectorAll('.message.unread').forEach(message => message.classList.remove('unread'));
+                this.button.textContent = 'All marked read';
+                Utils.notify('Inbox messages queued as read', 'success');
+                setTimeout(() => {
+                    if (this.button) {
+                        this.button.disabled = false;
+                        this.button.textContent = original;
+                    }
+                }, 2000);
+                return true;
+            } catch (error) {
+                console.warn('REL InboxReadModule:', error);
+                this.button.disabled = false;
+                this.button.textContent = original;
+                Utils.notify('Could not mark inbox messages as read', 'error');
+                return false;
+            }
+        }
+    };
+
+    // =========================================================================
     // SAVED SEARCHES & FILTERS MODULE
     // =========================================================================
     const SavedViewsModule = {
@@ -7870,6 +7946,8 @@
             buildMultiRedditUrl: MultiRedditModule.buildUrl.bind(MultiRedditModule),
             getThreadId: SessionTabsModule.getThreadId.bind(SessionTabsModule),
             normalizeSessionTab: SessionTabsModule.normalizeTab.bind(SessionTabsModule),
+            isMessagePath: InboxReadModule.isMessagePath.bind(InboxReadModule),
+            buildMarkAllReadBody: InboxReadModule.buildRequestBody.bind(InboxReadModule),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });
@@ -7893,6 +7971,7 @@
             SavedViewsModule.init();
             MultiRedditModule.init();
             SessionTabsModule.init();
+            InboxReadModule.init();
             SubredditDescriptionModule.init();
 
         // Content modules
