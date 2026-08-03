@@ -100,6 +100,7 @@ Every theme provides full coverage across all Reddit elements — headers, sideb
 - **Custom CSS** — Add your own CSS rules via the settings panel
 - **Theme Palette Editor** — Edit safe color tokens per theme and export/import palette JSON
 - **Font Pairing Picker** — Choose local system font pairings per theme without downloading fonts
+- **Local Analytics** — Optional on-device totals for blocked ads, filtered posts, media expansions, and page visits
 - **Remove Subreddit Styles** — Strip custom CSS from subreddits for a consistent look
 - **Classic Snoo Favicon** — Restores the 2006–2022 Reddit favicon
 - **Hide Buttons** — Individually toggle hide/show for Gold, Share, Save, Crosspost, and Report buttons

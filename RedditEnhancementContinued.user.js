@@ -76,7 +76,8 @@
             savedViews: 'rel_saved_views_v1',
             multiReddits: 'rel_multireddits_v1',
             customPalettes: 'rel_custom_palettes_v1',
-            fontPairings: 'rel_font_pairings_v1'
+            fontPairings: 'rel_font_pairings_v1',
+            analytics: 'rel_analytics_v1'
         },
         defaults: {
             // Core
@@ -164,6 +165,7 @@
             touchGestures: true,
             touchSwipeThreshold: 80,
             discordLayout: false,
+            analyticsEnabled: false,
             // Migration flag (skip v2.2.1 migration for new installs)
             _migratedV221: true
         }
@@ -315,6 +317,8 @@
     if (!customPalettes || typeof customPalettes !== 'object' || Array.isArray(customPalettes)) customPalettes = {};
     let fontPairings = Storage.get(CONFIG.storageKeys.fontPairings, {});
     if (!fontPairings || typeof fontPairings !== 'object' || Array.isArray(fontPairings)) fontPairings = {};
+    let analyticsStats = Storage.get(CONFIG.storageKeys.analytics, {});
+    if (!analyticsStats || typeof analyticsStats !== 'object' || Array.isArray(analyticsStats)) analyticsStats = {};
 
     function saveSettings() { Storage.set(CONFIG.storageKeys.settings, settings); }
     function saveUserTags() { Storage.set(CONFIG.storageKeys.userTags, userTags); }
@@ -1496,6 +1500,50 @@
     };
 
     // =========================================================================
+    // LOCAL ANALYTICS MODULE
+    // =========================================================================
+    const AnalyticsModule = {
+        COUNTERS: ['adsBlocked', 'postsFiltered', 'mediaExpanded', 'pageViews'],
+        saveTimer: null,
+
+        normalizeStats(source) {
+            const input = source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+            const result = {};
+            this.COUNTERS.forEach(key => { result[key] = Number.isFinite(Number(input[key])) ? Math.max(0, Math.floor(Number(input[key]))) : 0; });
+            result.lastUpdated = typeof input.lastUpdated === 'string' ? input.lastUpdated : null;
+            return result;
+        },
+
+        getStats() {
+            return this.normalizeStats(analyticsStats);
+        },
+
+        flush() {
+            analyticsStats = this.normalizeStats(analyticsStats);
+            analyticsStats.lastUpdated = new Date().toISOString();
+            Storage.set(CONFIG.storageKeys.analytics, analyticsStats);
+            this.saveTimer = null;
+        },
+
+        increment(key, amount = 1) {
+            if (!settings.analyticsEnabled || !this.COUNTERS.includes(key)) return;
+            analyticsStats = this.getStats();
+            analyticsStats[key] += Math.max(0, Math.floor(Number(amount) || 0));
+            clearTimeout(this.saveTimer);
+            this.saveTimer = setTimeout(() => this.flush(), 500);
+        },
+
+        reset() {
+            analyticsStats = this.normalizeStats({});
+            this.flush();
+        },
+
+        init() {
+            if (settings.analyticsEnabled) this.increment('pageViews');
+        }
+    };
+
+    // =========================================================================
     // BASE STYLES
     // =========================================================================
     const Styles = {
@@ -2525,6 +2573,7 @@
                 { id: 'privacy', label: 'Privacy' },
                 { id: 'sync', label: 'Sync' },
                 { id: 'diff', label: 'Diff' },
+                { id: 'analytics', label: 'Analytics' },
                 { id: 'backup', label: 'Backup' }
             ];
 
@@ -2631,6 +2680,9 @@
                 diff: [
                     { type: 'settingsDiff' }
                 ],
+                analytics: [
+                    { type: 'analytics' }
+                ],
                 backup: [
                     { type: 'backupRestore' }
                 ]
@@ -2689,6 +2741,8 @@
                         content.appendChild(this.buildSyncSettings());
                     } else if (def.type === 'settingsDiff') {
                         content.appendChild(this.buildSettingsDiff());
+                    } else if (def.type === 'analytics') {
+                        content.appendChild(this.buildAnalyticsPanel());
                     } else if (def.type === 'ignoredUsers') {
                         content.appendChild(this.buildIgnoredUsers());
                     } else if (def.type === 'textarea') {
@@ -3661,6 +3715,47 @@
             };
             render();
             section.appendChild(list);
+            return section;
+        },
+
+        buildAnalyticsPanel() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Local Analytics</h3><div class="rel-setting-desc" style="margin-bottom:10px;">Opt-in counters stay in this userscript profile. REC records only totals; it does not collect URLs, titles, usernames, or network telemetry.</div>';
+            const toggleRow = Utils.createElement('div', { className: 'rel-setting-item' });
+            toggleRow.appendChild(Utils.createElement('span', { textContent: 'Enable local counters' }));
+            const toggle = Utils.createElement('label', { className: 'rel-toggle' });
+            const enabled = Utils.createElement('input', { type: 'checkbox' });
+            enabled.checked = !!settings.analyticsEnabled;
+            enabled.addEventListener('change', () => {
+                settings.analyticsEnabled = enabled.checked;
+                saveSettings();
+                if (enabled.checked) AnalyticsModule.increment('pageViews');
+                renderStats();
+            });
+            toggle.appendChild(enabled);
+            toggle.appendChild(Utils.createElement('span', { className: 'rel-toggle-slider' }));
+            toggleRow.appendChild(toggle);
+            section.appendChild(toggleRow);
+            const stats = Utils.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(120px, 1fr))', gap: '8px', margin: '12px 0' } });
+            const renderStats = () => {
+                stats.innerHTML = '';
+                const values = AnalyticsModule.getStats();
+                [
+                    ['adsBlocked', 'Ads blocked'],
+                    ['postsFiltered', 'Posts filtered'],
+                    ['mediaExpanded', 'Media expanded'],
+                    ['pageViews', 'Pages visited']
+                ].forEach(([key, label]) => {
+                    const card = Utils.createElement('div', { style: { padding: '8px', border: '1px solid rgba(128,128,128,0.3)', borderRadius: '5px' } });
+                    card.appendChild(Utils.createElement('div', { textContent: label, style: { fontSize: '11px', opacity: '0.7' } }));
+                    card.appendChild(Utils.createElement('strong', { textContent: String(values[key]), style: { display: 'block', fontSize: '20px', marginTop: '3px' } }));
+                    stats.appendChild(card);
+                });
+            };
+            renderStats();
+            section.appendChild(stats);
+            const reset = Utils.createElement('button', { className: 'rel-btn-small rel-btn-secondary', textContent: 'Reset Counters', type: 'button', onClick: () => { AnalyticsModule.reset(); renderStats(); Utils.notify('Local analytics reset', 'success'); } });
+            section.appendChild(reset);
             return section;
         },
 
@@ -4959,6 +5054,7 @@
             const entry = thing.querySelector('.entry');
             entry.appendChild(container);
             btn.textContent = type === 'gallery' ? '[-gallery]' : (type === 'image' ? '[-img]' : '[-vid]');
+            AnalyticsModule.increment('mediaExpanded');
         },
 
         async loadGallery(thing, container) {
@@ -5775,6 +5871,7 @@
                     }
                 });
             }
+            if (hiddenCount > 0 && hiddenCount < things.length) AnalyticsModule.increment('postsFiltered', hiddenCount);
         },
 
         refresh() {
@@ -7583,9 +7680,15 @@
 
         process(container) {
             if (!settings.adBlocker) return;
+            let blocked = 0;
             container.querySelectorAll('.thing.promoted, .thing.promotedlink').forEach(el => {
                 el.style.display = 'none';
+                if (!el.hasAttribute('data-rel-ad-counted')) {
+                    el.setAttribute('data-rel-ad-counted', '1');
+                    blocked++;
+                }
             });
+            if (blocked) AnalyticsModule.increment('adsBlocked', blocked);
         }
     };
 
@@ -9098,6 +9201,7 @@
             normalizePalettes: PaletteModule.normalizePalettes.bind(PaletteModule),
             normalizeFontPairing: FontPairingModule.normalizePairing.bind(FontPairingModule),
             getFontPairing: FontPairingModule.getPairing.bind(FontPairingModule),
+            normalizeAnalyticsStats: AnalyticsModule.normalizeStats.bind(AnalyticsModule),
             createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
             observeForTest: ObserverRegistry.observe.bind(ObserverRegistry),
             disconnectObservers: ObserverRegistry.disconnectAll.bind(ObserverRegistry),
@@ -9113,6 +9217,7 @@
         // Apply body classes
         DarkModeModule.init();
         FontPairingModule.init();
+        AnalyticsModule.init();
 
         // Style/Layout modules (run early)
         SubredditStyleRemoverModule.init();
