@@ -9,6 +9,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Catbox, ImgChest, and ImgBB image-page expandos with safe CDN extraction and multi-image controls.
 - Added: Syndication-first X/Twitter previews with media rendering and no-iframe oEmbed fallback.
 - Added: Native v.redd.it DASH video/audio remux through MediaSource with codec and embed fallbacks.
+- Added: Per-subreddit filter overrides with inherited, replacement, and disabled modes.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

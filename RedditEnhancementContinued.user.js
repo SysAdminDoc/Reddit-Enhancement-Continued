@@ -206,8 +206,15 @@
     let userTags = Storage.get(CONFIG.storageKeys.userTags, {});
     let filters = Storage.get(CONFIG.storageKeys.filters, {
         keywords: [], domains: [], subreddits: [], flairs: [], users: [],
-        useRegex: false, hideNSFW: false, hideVisited: false
+        useRegex: false, hideNSFW: false, hideVisited: false, subredditOverrides: {}
     });
+    if (!filters || typeof filters !== 'object' || Array.isArray(filters)) filters = {};
+    ['keywords', 'domains', 'subreddits', 'flairs', 'users'].forEach(key => {
+        if (!Array.isArray(filters[key])) filters[key] = [];
+    });
+    if (!filters.subredditOverrides || typeof filters.subredditOverrides !== 'object' || Array.isArray(filters.subredditOverrides)) {
+        filters.subredditOverrides = {};
+    }
     let visitedComments = Storage.get(CONFIG.storageKeys.visitedComments, {});
     let ignoredUsers = Storage.get(CONFIG.storageKeys.ignoredUsers, []);
     let voteWeights = Storage.get(CONFIG.storageKeys.voteWeights, {});
@@ -2464,6 +2471,130 @@
                 section.appendChild(group);
             });
 
+            section.appendChild(this.buildSubredditOverrides());
+
+            return section;
+        },
+
+        buildSubredditOverrides() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Per-Subreddit Overrides</h3><div class="rel-setting-desc" style="margin-bottom:8px;">Add local rules to a subreddit, replace its global rules, or disable filtering there.</div>';
+            const list = Utils.createElement('div', { className: 'rel-filter-list' });
+
+            const ensureOverride = (name) => {
+                const key = name.trim().replace(/^\/r\//i, '').toLowerCase();
+                if (!key) return null;
+                if (!filters.subredditOverrides[key] || typeof filters.subredditOverrides[key] !== 'object') {
+                    filters.subredditOverrides[key] = {
+                        enabled: true, mode: 'merge', hideNSFW: null,
+                        keywords: [], domains: [], flairs: [], users: []
+                    };
+                }
+                const override = filters.subredditOverrides[key];
+                ['keywords', 'domains', 'flairs', 'users'].forEach(field => {
+                    if (!Array.isArray(override[field])) override[field] = [];
+                });
+                if (!['merge', 'replace'].includes(override.mode)) override.mode = 'merge';
+                if (typeof override.enabled !== 'boolean') override.enabled = true;
+                if (![true, false, null].includes(override.hideNSFW)) override.hideNSFW = null;
+                return { key, override };
+            };
+
+            const renderList = () => {
+                list.innerHTML = '';
+                Object.keys(filters.subredditOverrides).sort().forEach(name => {
+                    const { override } = ensureOverride(name);
+                    const item = Utils.createElement('div', { className: 'rel-filter-item', style: { display: 'block', padding: '8px' } });
+                    const title = Utils.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' } });
+                    title.appendChild(Utils.createElement('strong', { textContent: `/r/${name}` }));
+
+                    const enabled = Utils.createElement('input', { type: 'checkbox' });
+                    enabled.checked = override.enabled;
+                    enabled.title = 'Enable filtering for this subreddit';
+                    enabled.addEventListener('change', () => {
+                        override.enabled = enabled.checked;
+                        saveFilters();
+                    });
+                    title.appendChild(enabled);
+
+                    const mode = Utils.createElement('select', { className: 'rel-select', title: 'Rule mode' });
+                    [['merge', 'Add to global'], ['replace', 'Use only local']].forEach(([value, label]) => {
+                        const option = Utils.createElement('option', { value, textContent: label });
+                        option.selected = override.mode === value;
+                        mode.appendChild(option);
+                    });
+                    mode.addEventListener('change', () => { override.mode = mode.value; saveFilters(); });
+                    title.appendChild(mode);
+
+                    const removeBtn = Utils.createElement('button', {
+                        className: 'rel-filter-remove', textContent: '\u2715', title: 'Remove override',
+                        onClick: () => { delete filters.subredditOverrides[name]; saveFilters(); renderList(); }
+                    });
+                    title.appendChild(removeBtn);
+                    item.appendChild(title);
+
+                    const addRule = (field, placeholder) => {
+                        const row = Utils.createElement('div', { className: 'rel-filter-add-row', style: { marginTop: '4px' } });
+                        const input = Utils.createElement('input', { className: 'rel-input', placeholder });
+                        const add = Utils.createElement('button', { className: 'rel-btn-small rel-btn-secondary', textContent: `Add ${field.slice(0, -1)}` });
+                        const addValue = () => {
+                            const value = input.value.trim();
+                            if (value && !override[field].includes(value)) {
+                                override[field].push(value);
+                                saveFilters();
+                                renderList();
+                            }
+                            input.value = '';
+                        };
+                        add.addEventListener('click', addValue);
+                        input.addEventListener('keydown', event => { if (event.key === 'Enter') addValue(); });
+                        row.appendChild(input);
+                        row.appendChild(add);
+                        item.appendChild(row);
+                        if (override[field].length) {
+                            const values = Utils.createElement('div', { style: { fontSize: '11px', opacity: '0.8', marginTop: '3px' } });
+                            values.textContent = override[field].join(', ');
+                            item.appendChild(values);
+                        }
+                    };
+                    addRule('keywords', 'local keyword or /regex/');
+                    addRule('domains', 'local domain');
+                    addRule('flairs', 'local flair');
+                    addRule('users', 'local username');
+
+                    const nsfw = Utils.createElement('select', { className: 'rel-select', style: { marginTop: '6px' } });
+                    [['inherit', 'NSFW: inherit'], ['true', 'NSFW: hide'], ['false', 'NSFW: allow']].forEach(([value, label]) => {
+                        const option = Utils.createElement('option', { value, textContent: label });
+                        option.selected = override.hideNSFW === null ? value === 'inherit' : String(override.hideNSFW) === value;
+                        nsfw.appendChild(option);
+                    });
+                    nsfw.addEventListener('change', () => {
+                        override.hideNSFW = nsfw.value === 'inherit' ? null : nsfw.value === 'true';
+                        saveFilters();
+                    });
+                    item.appendChild(nsfw);
+                    list.appendChild(item);
+                });
+            };
+            renderList();
+            section.appendChild(list);
+
+            const addRow = Utils.createElement('div', { className: 'rel-filter-add-row' });
+            const addInput = Utils.createElement('input', { className: 'rel-input', placeholder: 'subreddit name' });
+            const addBtn = Utils.createElement('button', {
+                className: 'rel-btn-small rel-btn-primary', textContent: 'Add Override',
+                onClick: () => {
+                    const result = ensureOverride(addInput.value);
+                    if (!result) return;
+                    saveFilters();
+                    addInput.value = '';
+                    renderList();
+                }
+            });
+            addInput.addEventListener('keydown', event => { if (event.key === 'Enter') addBtn.click(); });
+            addRow.appendChild(addInput);
+            addRow.appendChild(addBtn);
+            section.appendChild(addRow);
             return section;
         },
 
@@ -4186,12 +4317,15 @@
         },
 
         shouldFilter(data) {
+            const activeFilters = this.getEffectiveFilters(data.subreddit);
+            if (activeFilters.enabled === false) return false;
+
             // NSFW filter
-            if (filters.hideNSFW && data.isNSFW) return true;
+            if (activeFilters.hideNSFW && data.isNSFW) return true;
 
             // Keyword filter
             const title = data.url ? document.querySelector(`[data-fullname="${data.id}"] a.title`)?.textContent || '' : '';
-            for (const kw of (filters.keywords || [])) {
+            for (const kw of (activeFilters.keywords || [])) {
                 if (kw.startsWith('/') && kw.endsWith('/')) {
                     try {
                         const regex = new RegExp(kw.slice(1, -1), 'i');
@@ -4204,33 +4338,54 @@
 
             // Domain filter
             if (data.domain) {
-                for (const d of (filters.domains || [])) {
+                for (const d of (activeFilters.domains || [])) {
                     if (data.domain.includes(d)) return true;
                 }
             }
 
             // Subreddit filter
             if (data.subreddit) {
-                for (const sr of (filters.subreddits || [])) {
+                for (const sr of (activeFilters.subreddits || [])) {
                     if (data.subreddit.toLowerCase() === sr.toLowerCase()) return true;
                 }
             }
 
             // Flair filter
             if (data.flair) {
-                for (const f of (filters.flairs || [])) {
+                for (const f of (activeFilters.flairs || [])) {
                     if (data.flair.toLowerCase().includes(f.toLowerCase())) return true;
                 }
             }
 
             // User filter
             if (data.author) {
-                for (const u of (filters.users || [])) {
+                for (const u of (activeFilters.users || [])) {
                     if (data.author.toLowerCase() === u.toLowerCase()) return true;
                 }
             }
 
             return false;
+        },
+
+        mergeSubredditFilters(base, override) {
+            if (!override || typeof override !== 'object') return { ...base };
+            if (override.enabled === false) return { ...base, enabled: false };
+            const fields = ['keywords', 'domains', 'subreddits', 'flairs', 'users'];
+            const merged = { ...base };
+            fields.forEach(field => {
+                const local = Array.isArray(override[field]) ? override[field] : [];
+                merged[field] = override.mode === 'replace'
+                    ? [...local]
+                    : [...new Set([...(Array.isArray(base[field]) ? base[field] : []), ...local])];
+            });
+            if ([true, false].includes(override.hideNSFW)) merged.hideNSFW = override.hideNSFW;
+            return merged;
+        },
+
+        getEffectiveFilters(subreddit) {
+            const name = String(subreddit || '').replace(/^\/r\//i, '').toLowerCase();
+            const override = name ? filters.subredditOverrides?.[name] : null;
+            return this.mergeSubredditFilters(filters, override);
         }
     };
 
@@ -6535,7 +6690,9 @@
             isSupportedImageUrl: ImageExpansionModule.isSupportedImageUrl.bind(ImageExpansionModule),
             extractImageUrlsFromHTML: ImageExpansionModule.extractImageUrlsFromHTML.bind(ImageExpansionModule),
             extractTweetId: SocialMediaPreviewModule.extractTweetId.bind(SocialMediaPreviewModule),
-            selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule)
+            selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule),
+            mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
+            getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule)
         });
     }
 
