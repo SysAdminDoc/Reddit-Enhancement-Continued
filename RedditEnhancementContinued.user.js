@@ -206,7 +206,7 @@
     let userTags = Storage.get(CONFIG.storageKeys.userTags, {});
     let filters = Storage.get(CONFIG.storageKeys.filters, {
         keywords: [], domains: [], subreddits: [], flairs: [], users: [],
-        useRegex: false, hideNSFW: false, hideVisited: false, subredditOverrides: {}
+        useRegex: false, hideNSFW: false, hideVisited: false, subredditOverrides: {}, regexGroups: []
     });
     if (!filters || typeof filters !== 'object' || Array.isArray(filters)) filters = {};
     ['keywords', 'domains', 'subreddits', 'flairs', 'users'].forEach(key => {
@@ -215,6 +215,15 @@
     if (!filters.subredditOverrides || typeof filters.subredditOverrides !== 'object' || Array.isArray(filters.subredditOverrides)) {
         filters.subredditOverrides = {};
     }
+    if (!Array.isArray(filters.regexGroups)) filters.regexGroups = [];
+    filters.regexGroups = filters.regexGroups.filter(rule => rule && typeof rule === 'object').map((rule, index) => ({
+        id: String(rule.id || `regex-${index + 1}`),
+        name: String(rule.name || `Rule ${index + 1}`),
+        pattern: String(rule.pattern || ''),
+        flags: String(rule.flags || 'i').replace(/[^dgimsuvy]/g, ''),
+        enabled: rule.enabled !== false,
+        hits: Number.isFinite(Number(rule.hits)) ? Math.max(0, Number(rule.hits)) : 0
+    }));
     let visitedComments = Storage.get(CONFIG.storageKeys.visitedComments, {});
     let ignoredUsers = Storage.get(CONFIG.storageKeys.ignoredUsers, []);
     let voteWeights = Storage.get(CONFIG.storageKeys.voteWeights, {});
@@ -2472,7 +2481,75 @@
             });
 
             section.appendChild(this.buildSubredditOverrides());
+            section.appendChild(this.buildRegexGroupEditor());
 
+            return section;
+        },
+
+        buildRegexGroupEditor() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Named Regex Rules</h3><div class="rel-setting-desc" style="margin-bottom:8px;">Named rules run against post titles. Matches increment a persistent hit counter.</div>';
+            const list = Utils.createElement('div', { className: 'rel-filter-list' });
+            const renderList = () => {
+                list.innerHTML = '';
+                filters.regexGroups.forEach((rule, index) => {
+                    const item = Utils.createElement('div', { className: 'rel-filter-item', style: { display: 'block', padding: '8px' } });
+                    const header = Utils.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } });
+                    const enabled = Utils.createElement('input', { type: 'checkbox' });
+                    enabled.checked = rule.enabled;
+                    enabled.addEventListener('change', () => { rule.enabled = enabled.checked; saveFilters(); });
+                    header.appendChild(enabled);
+                    header.appendChild(Utils.createElement('strong', { textContent: rule.name }));
+                    header.appendChild(Utils.createElement('span', { textContent: `/${rule.pattern}/${rule.flags}`, style: { fontFamily: 'monospace', fontSize: '11px', opacity: '0.8' } }));
+                    header.appendChild(Utils.createElement('span', { textContent: `${rule.hits} hits`, style: { marginLeft: 'auto', fontSize: '11px', opacity: '0.7' } }));
+                    const reset = Utils.createElement('button', {
+                        className: 'rel-btn-small rel-btn-secondary', textContent: 'Reset',
+                        onClick: () => { rule.hits = 0; saveFilters(); renderList(); }
+                    });
+                    header.appendChild(reset);
+                    const remove = Utils.createElement('button', {
+                        className: 'rel-filter-remove', textContent: '\u2715', title: 'Remove rule',
+                        onClick: () => { filters.regexGroups.splice(index, 1); saveFilters(); renderList(); }
+                    });
+                    header.appendChild(remove);
+                    item.appendChild(header);
+                    list.appendChild(item);
+                });
+            };
+            renderList();
+            section.appendChild(list);
+
+            const form = Utils.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 2fr 70px auto', gap: '6px', marginTop: '8px' } });
+            const nameInput = Utils.createElement('input', { className: 'rel-input', placeholder: 'rule name' });
+            const patternInput = Utils.createElement('input', { className: 'rel-input', placeholder: 'pattern, e.g. low effort' });
+            const flagsInput = Utils.createElement('input', { className: 'rel-input', placeholder: 'flags', value: 'i', title: 'Regex flags' });
+            const add = Utils.createElement('button', { className: 'rel-btn-small rel-btn-primary', textContent: 'Add' });
+            const addRule = () => {
+                const name = nameInput.value.trim();
+                const pattern = patternInput.value.trim();
+                const flags = flagsInput.value.trim().replace(/[^dgimsuvy]/g, '');
+                if (!name || !pattern) return;
+                try { new RegExp(pattern, flags); }
+                catch { Utils.notify('Invalid regular expression or flags', 'error'); return; }
+                filters.regexGroups.push({
+                    id: `regex-${Date.now()}-${filters.regexGroups.length}`,
+                    name, pattern, flags, enabled: true, hits: 0
+                });
+                saveFilters();
+                nameInput.value = '';
+                patternInput.value = '';
+                flagsInput.value = 'i';
+                renderList();
+            };
+            add.addEventListener('click', addRule);
+            [nameInput, patternInput, flagsInput].forEach(input => input.addEventListener('keydown', event => {
+                if (event.key === 'Enter') addRule();
+            }));
+            form.appendChild(nameInput);
+            form.appendChild(patternInput);
+            form.appendChild(flagsInput);
+            form.appendChild(add);
+            section.appendChild(form);
             return section;
         },
 
@@ -4271,6 +4348,8 @@
     // FILTER MODULE
     // =========================================================================
     const FilterModule = {
+        regexSaveTimer: null,
+
         init() {
             if (!settings.postFiltering) return;
             this.process(document);
@@ -4320,11 +4399,24 @@
             const activeFilters = this.getEffectiveFilters(data.subreddit);
             if (activeFilters.enabled === false) return false;
 
+            const title = data.url ? document.querySelector(`[data-fullname="${data.id}"] a.title`)?.textContent || '' : '';
+            let namedRegexMatched = false;
+            for (const rule of (activeFilters.regexGroups || [])) {
+                if (!rule.enabled || !rule.pattern) continue;
+                if (this.testRegexRule(rule, title)) {
+                    rule.hits = Number(rule.hits || 0) + 1;
+                    namedRegexMatched = true;
+                }
+            }
+            if (namedRegexMatched) {
+                this.scheduleRegexSave();
+                return true;
+            }
+
             // NSFW filter
             if (activeFilters.hideNSFW && data.isNSFW) return true;
 
             // Keyword filter
-            const title = data.url ? document.querySelector(`[data-fullname="${data.id}"] a.title`)?.textContent || '' : '';
             for (const kw of (activeFilters.keywords || [])) {
                 if (kw.startsWith('/') && kw.endsWith('/')) {
                     try {
@@ -4378,8 +4470,32 @@
                     ? [...local]
                     : [...new Set([...(Array.isArray(base[field]) ? base[field] : []), ...local])];
             });
+            const localRegex = Array.isArray(override.regexGroups) ? override.regexGroups : [];
+            merged.regexGroups = override.mode === 'replace'
+                ? [...localRegex]
+                : [...(Array.isArray(base.regexGroups) ? base.regexGroups : []), ...localRegex];
             if ([true, false].includes(override.hideNSFW)) merged.hideNSFW = override.hideNSFW;
             return merged;
+        },
+
+        testRegexRule(rule, text) {
+            try {
+                const regex = new RegExp(rule.pattern, rule.flags || 'i');
+                regex.lastIndex = 0;
+                const matched = regex.test(text);
+                regex.lastIndex = 0;
+                return matched;
+            } catch {
+                return false;
+            }
+        },
+
+        scheduleRegexSave() {
+            clearTimeout(this.regexSaveTimer);
+            this.regexSaveTimer = setTimeout(() => {
+                saveFilters();
+                this.regexSaveTimer = null;
+            }, 750);
         },
 
         getEffectiveFilters(subreddit) {
@@ -6692,7 +6808,8 @@
             extractTweetId: SocialMediaPreviewModule.extractTweetId.bind(SocialMediaPreviewModule),
             selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule),
             mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
-            getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule)
+            getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
+            testRegexRule: FilterModule.testRegexRule.bind(FilterModule)
         });
     }
 
