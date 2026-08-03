@@ -161,6 +161,7 @@
             apiCanaryIntervalHours: 24,
             touchGestures: true,
             touchSwipeThreshold: 80,
+            discordLayout: false,
             // Migration flag (skip v2.2.1 migration for new installs)
             _migratedV221: true
         }
@@ -2385,7 +2386,8 @@
                     { key: 'customCSS', label: 'Custom CSS', desc: 'Add your own CSS rules', type: 'textarea' },
                     { key: 'removeSubredditStyles', label: 'Remove Subreddit Styles', desc: 'Strip custom CSS from subreddits for consistent dark mode' },
                     { key: 'wideView', label: 'Wide View', desc: 'Expand content area to use full screen width' },
-                    { key: 'enhancedUI', label: 'Enhanced UI', desc: 'Modern typography, card layouts, rainbow threads, polished interactions' }
+                    { key: 'enhancedUI', label: 'Enhanced UI', desc: 'Modern typography, card layouts, rainbow threads, polished interactions' },
+                    { key: 'discordLayout', label: 'Discord-Style Layout (Experimental)', desc: 'Use channel-like headers and chat-style cards; reload to apply' }
                 ],
                 content: [
                     { key: 'inlineImageExpansion', label: 'Inline Image Expansion', desc: 'Expand images and videos inline' },
@@ -7959,6 +7961,83 @@
     };
 
     // =========================================================================
+    // DISCORD-STYLE LAYOUT MODULE (EXPERIMENTAL)
+    // =========================================================================
+    const DiscordLayoutModule = {
+        styleInjected: false,
+
+        getChannelLabel(pathname = window.location.pathname) {
+            const match = String(pathname || '').match(/\/r\/([^/]+)/i);
+            return match ? `# ${match[1].toLowerCase()}` : '# home';
+        },
+
+        getInitials(author) {
+            const value = String(author || '').replace(/^\[deleted\]$/i, 'deleted').trim();
+            if (!value) return '?';
+            const words = value.split(/[^A-Za-z0-9]+/).filter(Boolean);
+            return (words.length > 1 ? words[0][0] + words[words.length - 1][0] : value.slice(0, 2)).toUpperCase();
+        },
+
+        injectStyles() {
+            if (this.styleInjected) return;
+            const t = Themes.getTheme();
+            GM_addStyle(`
+                body.rel-discord-layout { background:${t.bg} !important; }
+                body.rel-discord-layout #header { border-bottom:1px solid ${t.border} !important; }
+                body.rel-discord-layout .content { max-width:1100px !important; margin:0 auto !important; }
+                body.rel-discord-layout .rel-discord-channel { display:flex; align-items:center; gap:10px; padding:12px 16px; margin:8px 0; border:1px solid ${t.border}; border-radius:8px; background:${t.bgLight}; }
+                body.rel-discord-layout .rel-discord-channel-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:8px; background:${t.accent}; color:${t.bg}; font-weight:800; }
+                body.rel-discord-layout .rel-discord-channel-label { font-size:16px; font-weight:700; color:${t.fg}; }
+                body.rel-discord-layout .rel-discord-channel-meta { font-size:11px; color:${t.fgDim}; }
+                body.rel-discord-layout .thing.link { display:grid !important; grid-template-columns:42px minmax(0,1fr) !important; gap:8px; padding:12px !important; margin:8px 0 !important; border:1px solid ${t.border} !important; border-radius:8px !important; background:${t.bgLight} !important; }
+                body.rel-discord-layout .thing.link > .midcol { grid-column:1; grid-row:1; width:36px !important; float:none !important; }
+                body.rel-discord-layout .thing.link > .entry { grid-column:2; grid-row:1; min-width:0; }
+                body.rel-discord-layout .comment { margin-top:6px !important; padding:8px !important; border-radius:7px !important; }
+                body.rel-discord-layout .comment > .entry { position:relative; padding-left:40px !important; min-height:32px; }
+                body.rel-discord-layout .comment .rel-discord-avatar { position:absolute; left:0; top:0; width:30px; height:30px; display:grid; place-items:center; border-radius:50%; background:${t.surface}; color:${t.accent}; font-size:10px; font-weight:800; }
+                body.rel-discord-layout .comment .author { font-weight:700 !important; color:${t.accent} !important; }
+                body.rel-discord-layout .comment .tagline { margin-bottom:3px; }
+                body.rel-discord-layout .comment .usertext-body { border-radius:0 7px 7px 7px; background:${t.bgLight}; padding:5px 8px; }
+                body.rel-discord-layout .comment .child { border-left:1px solid ${t.border} !important; }
+            `);
+            this.styleInjected = true;
+        },
+
+        buildChannelHeader() {
+            if (document.querySelector('.rel-discord-channel')) return;
+            const content = document.querySelector('.content[role="main"], body > .content, .content');
+            if (!content) return;
+            const header = Utils.createElement('div', { className: 'rel-discord-channel' });
+            header.appendChild(Utils.createElement('span', { className: 'rel-discord-channel-icon', textContent: '#' }));
+            const copy = Utils.createElement('div');
+            copy.appendChild(Utils.createElement('div', { className: 'rel-discord-channel-label', textContent: this.getChannelLabel() }));
+            copy.appendChild(Utils.createElement('div', { className: 'rel-discord-channel-meta', textContent: 'Reddit Enhancement Continued experimental layout' }));
+            header.appendChild(copy);
+            content.prepend(header);
+        },
+
+        process(container) {
+            if (!settings.discordLayout) return;
+            container.querySelectorAll('.thing.link').forEach(post => post.classList.add('rel-discord-post'));
+            container.querySelectorAll('.comment:not([data-rel-discord])').forEach(comment => {
+                comment.setAttribute('data-rel-discord', '1');
+                const entry = comment.querySelector(':scope > .entry');
+                if (!entry || entry.querySelector('.rel-discord-avatar')) return;
+                const author = comment.getAttribute('data-author') || entry.querySelector('.author')?.textContent;
+                entry.prepend(Utils.createElement('span', { className: 'rel-discord-avatar', textContent: this.getInitials(author), 'aria-hidden': 'true' }));
+            });
+        },
+
+        init() {
+            if (!settings.discordLayout) return;
+            document.body.classList.add('rel-discord-layout');
+            this.injectStyles();
+            this.buildChannelHeader();
+            this.process(document);
+        }
+    };
+
+    // =========================================================================
     // TOUCH SWIPE GESTURES MODULE
     // =========================================================================
     const TouchGestureModule = {
@@ -8766,6 +8845,8 @@
             classifySwipe: TouchGestureModule.classifySwipe.bind(TouchGestureModule),
             getNextFocusIndex: ModalA11yModule.getNextFocusIndex.bind(ModalA11yModule),
             getDialogAttributes: ModalA11yModule.getDialogAttributes.bind(ModalA11yModule),
+            getDiscordChannelLabel: DiscordLayoutModule.getChannelLabel.bind(DiscordLayoutModule),
+            getDiscordInitials: DiscordLayoutModule.getInitials.bind(DiscordLayoutModule),
             createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
             observeForTest: ObserverRegistry.observe.bind(ObserverRegistry),
             disconnectObservers: ObserverRegistry.disconnectAll.bind(ObserverRegistry),
@@ -8784,6 +8865,7 @@
         // Style/Layout modules (run early)
         SubredditStyleRemoverModule.init();
         WideViewModule.init();
+        DiscordLayoutModule.init();
         AdBlockModule.init();
 
         // UI modules

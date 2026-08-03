@@ -32,6 +32,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Configurable Reddit API canary check with cached interval status and warning toast on schema or reachability failures.
 - Added: Optional touch-device horizontal swipe navigation with configurable threshold and input/media exclusions.
 - Changed: REC dialogs now expose accessible names, modal semantics, Escape close, focus trapping, and focus restoration.
+- Added: Opt-in Discord-style experimental layout with channel context, chat-like cards, and accessible author initials.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 
