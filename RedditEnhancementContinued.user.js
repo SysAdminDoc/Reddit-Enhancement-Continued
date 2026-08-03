@@ -87,6 +87,8 @@
             collapseChildCommentsNested: false,
             collapseChildCommentsHideNested: false,
             postFiltering: true,
+            lowEffortHeuristic: false,
+            lowEffortThreshold: 2,
             highlightNewComments: true,
             oldRedditRedirect: true,
             oldFavicon: true,
@@ -2202,6 +2204,8 @@
                 ],
                 filtering: [
                     { key: 'postFiltering', label: 'Post Filtering', desc: 'Filter posts by keyword, domain, subreddit, flair' },
+                    { key: 'lowEffortHeuristic', label: 'Low-Effort Heuristic', desc: 'Opt-in title heuristic using length, capitalization, and emoji density' },
+                    { key: 'lowEffortThreshold', label: 'Low-Effort Score Threshold', desc: 'Signals required before hiding a post (1-3)', type: 'number', min: 1, max: 3 },
                     { key: 'userTagging', label: 'User Tagging', desc: 'Tag users with custom labels and colors' },
                     { key: 'userHighlighter', label: 'User Highlighter', desc: 'Color-code OP, mods, admins, and friends' },
                     { type: 'commentSweep' },
@@ -4616,6 +4620,8 @@
                 return true;
             }
 
+            if (settings.lowEffortHeuristic && this.isLowEffortTitle(title, settings.lowEffortThreshold)) return true;
+
             // NSFW filter
             if (activeFilters.hideNSFW && data.isNSFW) return true;
 
@@ -4691,6 +4697,24 @@
             } catch {
                 return false;
             }
+        },
+
+        scoreLowEffortTitle(title) {
+            const value = String(title || '').trim();
+            if (!value) return { score: 0, reasons: [] };
+            const letters = value.match(/[A-Za-z]/g) || [];
+            const uppercase = value.match(/[A-Z]/g) || [];
+            const emoji = [...value].filter(character => /[\u{1F300}-\u{1FAFF}\u2600-\u27BF]/u.test(character));
+            const reasons = [];
+            if (Array.from(value).length <= 20) reasons.push('short');
+            if (letters.length >= 4 && uppercase.length / letters.length >= 0.75) reasons.push('uppercase');
+            if (emoji.length >= 2 && emoji.length / Math.max(1, Array.from(value).length) >= 0.12) reasons.push('emoji');
+            return { score: reasons.length, reasons };
+        },
+
+        isLowEffortTitle(title, threshold = 2) {
+            const score = this.scoreLowEffortTitle(title).score;
+            return score >= Math.max(1, Math.min(3, Number(threshold) || 2));
         },
 
         scheduleRegexSave() {
@@ -7013,6 +7037,8 @@
             mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
             getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
             testRegexRule: FilterModule.testRegexRule.bind(FilterModule),
+            scoreLowEffortTitle: FilterModule.scoreLowEffortTitle.bind(FilterModule),
+            isLowEffortTitle: FilterModule.isLowEffortTitle.bind(FilterModule),
             serializeBlockList: SettingsModule.serializeBlockList.bind(SettingsModule),
             parseBlockList: SettingsModule.parseBlockList.bind(SettingsModule),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
