@@ -485,6 +485,84 @@
     };
 
     // =========================================================================
+    // MUTATION OBSERVER REGISTRY
+    // =========================================================================
+    const ObserverRegistry = {
+        records: new Map(),
+        keys: new Map(),
+
+        observe(target, callback, options, key = '') {
+            if (!target || typeof callback !== 'function') return null;
+            if (key && this.keys.has(key)) this.unregister(this.keys.get(key));
+            const observer = new MutationObserver(callback);
+            try {
+                observer.observe(target, options);
+            } catch (error) {
+                console.warn('REL ObserverRegistry: could not observe target', error);
+                return null;
+            }
+            this.records.set(observer, { observer, target, callback, options, key, connected: true });
+            if (key) this.keys.set(key, observer);
+            return observer;
+        },
+
+        disconnect(observer) {
+            const record = this.records.get(observer);
+            if (!record) {
+                observer?.disconnect?.();
+                return false;
+            }
+            record.observer.disconnect();
+            record.connected = false;
+            return true;
+        },
+
+        unregister(observer) {
+            const record = this.records.get(observer);
+            if (!record) return false;
+            record.observer.disconnect();
+            this.records.delete(observer);
+            if (record.key && this.keys.get(record.key) === observer) this.keys.delete(record.key);
+            return true;
+        },
+
+        disconnectAll() {
+            this.records.forEach(record => {
+                record.observer.disconnect();
+                record.connected = false;
+            });
+        },
+
+        reconnectAll() {
+            this.records.forEach(record => {
+                try {
+                    record.observer.observe(record.target, record.options);
+                    record.connected = true;
+                } catch {
+                    record.connected = false;
+                }
+            });
+        },
+
+        audit() {
+            return [...this.records.values()].map(record => ({ key: record.key, connected: record.connected }));
+        },
+
+        clear() {
+            this.records.forEach(record => record.observer.disconnect());
+            this.records.clear();
+            this.keys.clear();
+        }
+    };
+
+    const ObserverLifecycleModule = {
+        init() {
+            window.addEventListener('pagehide', () => ObserverRegistry.disconnectAll());
+            window.addEventListener('pageshow', event => { if (event.persisted) ObserverRegistry.reconnectAll(); });
+        }
+    };
+
+    // =========================================================================
     // THEME ENGINE
     // =========================================================================
     const Themes = {
@@ -5046,9 +5124,11 @@
             this.updateThings();
             document.addEventListener('keydown', (e) => this.handleKey(e));
             // Invalidate cache when DOM changes (NER pages, expand thread, etc)
-            new MutationObserver(() => { this._dirty = true; }).observe(
+            this.observer = ObserverRegistry.observe(
                 document.querySelector('.sitetable') || document.body,
-                { childList: true, subtree: true }
+                () => { this._dirty = true; },
+                { childList: true, subtree: true },
+                'keyboard-navigation'
             );
         },
 
@@ -7139,7 +7219,7 @@
                 };
                 disableStyles();
                 const head = document.head || document.documentElement;
-                new MutationObserver(disableStyles).observe(head, { childList: true });
+                this.observer = ObserverRegistry.observe(head, disableStyles, { childList: true }, 'subreddit-style-remover');
             }
             // Also uncheck "Use subreddit style" checkbox if present
             const styleOverride = document.getElementById('sr-style-bar');
@@ -7418,6 +7498,7 @@
     // INITIALIZATION
     // =========================================================================
     function init() {
+        ObserverLifecycleModule.init();
         // Disable subreddit styles IMMEDIATELY at document-start
         // Uses media="not all" instead of .remove() to preserve layout-critical CSS
         // Notification redirect (runs early, before DOM processing)
@@ -7439,7 +7520,7 @@
             // Watch for late-loading sheets
             const head = document.head || document.documentElement;
             if (head) {
-                new MutationObserver(disableStyles).observe(head, { childList: true });
+                ObserverRegistry.observe(head, disableStyles, { childList: true }, 'subreddit-style-remover');
             }
         }
 
@@ -8481,6 +8562,11 @@
             getProfileMode: ProfileModule.getMode.bind(ProfileModule),
             getSettingsDiff: SettingsDiffModule.getDiff.bind(SettingsDiffModule),
             createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
+            observeForTest: ObserverRegistry.observe.bind(ObserverRegistry),
+            disconnectObservers: ObserverRegistry.disconnectAll.bind(ObserverRegistry),
+            reconnectObservers: ObserverRegistry.reconnectAll.bind(ObserverRegistry),
+            auditObservers: ObserverRegistry.audit.bind(ObserverRegistry),
+            clearObservers: ObserverRegistry.clear.bind(ObserverRegistry),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });
@@ -8575,14 +8661,14 @@
         };
         stripDropdownOnclick(document);
         // Single consolidated MutationObserver for both reply and dropdown onclick stripping
-        new MutationObserver(muts => {
+        ObserverRegistry.observe(document.body || document.documentElement, muts => {
             muts.forEach(m => m.addedNodes.forEach(n => {
                 if (n.nodeType === 1) {
                     stripReplyOnclick(n);
                     stripDropdownOnclick(n);
                 }
             }));
-        }).observe(document.body || document.documentElement, { childList: true, subtree: true });
+        }, { childList: true, subtree: true }, 'native-event-sanitizer');
 
         document.addEventListener('click', function(e) {
             const replyLink = e.target.closest('.reply-button a, a[data-rel-reply]');

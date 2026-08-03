@@ -153,6 +153,7 @@ Reddit Enhancement Continued is a single `~5,600` line userscript that runs at `
 - **Pure CSS theming** — Themes are applied via `GM_addStyle` with `!important` overrides, covering every Reddit element including subreddit custom stylesheets.
 - **Shared API cache** — View Counter and Vote Estimator share a single `PostDataCache` to avoid duplicate API calls to Reddit's JSON endpoints.
 - **NER-compatible modules** — Every module implements a `process(container)` method that handles both initial page load and dynamically loaded Never Ending Reddit content.
+- **Observer lifecycle registry** — MutationObservers use stable keys, pagehide teardown, pageshow reconnection, and long-scroll leak coverage.
 - **Safety checks** — The ad blocker includes a post-load verification that auto-restores content if >90% of posts are accidentally hidden.
 
 ---

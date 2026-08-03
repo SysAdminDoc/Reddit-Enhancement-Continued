@@ -27,6 +27,8 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Per-device settings profile scope with safe shared/device store switching and reload handoff.
 - Added: Settings Diff tab with compact non-default values, sync-secret redaction, and individual reset actions.
 - Changed: Factory reset now saves and downloads a pre-reset backup and preserves the last backup for later retrieval.
+- Changed: MutationObservers now use keyed teardown/reconnection lifecycle management for SPA and bfcache transitions.
+- Added: NER long-scroll observer leak regression coverage that verifies repeated registration does not grow active observers.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 
