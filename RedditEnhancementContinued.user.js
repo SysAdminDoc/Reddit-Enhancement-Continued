@@ -567,6 +567,82 @@
     };
 
     // =========================================================================
+    // MODAL ACCESSIBILITY MODULE
+    // =========================================================================
+    const ModalA11yModule = {
+        current: null,
+        focusableSelector: 'a[href], area[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]',
+
+        getFocusable(container) {
+            return [...container.querySelectorAll(this.focusableSelector)].filter(element => {
+                if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
+                return element.offsetWidth !== 0 || element.offsetHeight !== 0 || element === document.activeElement;
+            });
+        },
+
+        getNextFocusIndex(length, currentIndex, backwards = false) {
+            if (length <= 0) return -1;
+            if (currentIndex < 0) return backwards ? length - 1 : 0;
+            return (currentIndex + (backwards ? -1 : 1) + length) % length;
+        },
+
+        attach(container, panel, close) {
+            panel.setAttribute('role', 'dialog');
+            panel.setAttribute('aria-modal', 'true');
+            panel.setAttribute('tabindex', '-1');
+            const heading = panel.querySelector('h1, h2, h3, [data-modal-title]');
+            if (heading) {
+                const id = heading.id || `rel-modal-title-${Date.now().toString(36)}`;
+                heading.id = id;
+                panel.setAttribute('aria-labelledby', id);
+            } else if (!panel.getAttribute('aria-label')) {
+                panel.setAttribute('aria-label', 'Reddit Enhancement Continued dialog');
+            }
+            const previous = document.activeElement;
+            let closed = false;
+            const onKeydown = event => {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    close();
+                    return;
+                }
+                if (event.key !== 'Tab') return;
+                const focusable = this.getFocusable(panel);
+                if (focusable.length === 0) {
+                    event.preventDefault();
+                    panel.focus();
+                    return;
+                }
+                const currentIndex = focusable.indexOf(document.activeElement);
+                const nextIndex = this.getNextFocusIndex(focusable.length, currentIndex, event.shiftKey);
+                const atBoundary = event.shiftKey ? currentIndex <= 0 : currentIndex === focusable.length - 1;
+                if (currentIndex < 0 || atBoundary) {
+                    event.preventDefault();
+                    focusable[nextIndex]?.focus?.();
+                }
+            };
+            container.addEventListener('keydown', onKeydown);
+            const record = {
+                cleanup: () => {
+                    if (closed) return;
+                    closed = true;
+                    container.removeEventListener('keydown', onKeydown);
+                    if (this.current === record) this.current = null;
+                    previous?.focus?.();
+                }
+            };
+            this.current?.cleanup?.();
+            this.current = record;
+            requestAnimationFrame(() => this.getFocusable(panel)[0]?.focus?.() || panel.focus());
+            return record.cleanup;
+        },
+
+        getDialogAttributes() {
+            return { role: 'dialog', modal: 'true', labelledBy: true, focusTrap: true };
+        }
+    };
+
+    // =========================================================================
     // THEME ENGINE
     // =========================================================================
     const Themes = {
@@ -2279,6 +2355,7 @@
 
             const t = Themes.getTheme();
             const overlay = Utils.createElement('div', { className: 'rel-settings-overlay' });
+            let closeOverlay = () => overlay.remove();
 
             const tabs = [
                 { id: 'appearance', label: 'Appearance' },
@@ -2402,7 +2479,7 @@
             // Header
             const header = Utils.createElement('div', { className: 'rel-settings-header' });
             header.innerHTML = `<h2>\u2699 Reddit Enhancement Continued <span class="rel-version">v${VERSION}</span></h2>`;
-            const closeBtn = Utils.createElement('button', { className: 'rel-settings-close', textContent: '\u2715', onClick: () => overlay.remove() });
+            const closeBtn = Utils.createElement('button', { className: 'rel-settings-close', textContent: '\u2715', 'aria-label': 'Close settings', onClick: () => closeOverlay() });
             header.appendChild(closeBtn);
             panel.appendChild(header);
 
@@ -2479,7 +2556,10 @@
             panel.appendChild(footer);
 
             overlay.appendChild(panel);
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            let cleanupModal;
+            closeOverlay = () => { cleanupModal?.(); overlay.remove(); };
+            cleanupModal = ModalA11yModule.attach(overlay, panel, closeOverlay);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
             document.body.appendChild(overlay);
         },
 
@@ -5310,11 +5390,12 @@
 
         showHelp() {
             const existing = document.querySelector('.rel-kb-help-overlay');
-            if (existing) { existing.remove(); return; }
+            if (existing) { ModalA11yModule.current?.cleanup?.(); existing.remove(); return; }
 
+            let closeOverlay = () => {};
             const overlay = Utils.createElement('div', {
                 className: 'rel-kb-help-overlay rel-settings-overlay',
-                onClick: (e) => { if (e.target === overlay) overlay.remove(); }
+                onClick: (e) => { if (e.target === overlay) closeOverlay(); }
             });
 
             const t = Themes.getTheme();
@@ -5340,16 +5421,17 @@
                 <p style="margin:12px 0 0;font-size:11px;opacity:0.5;">Press Escape or click outside to close</p>
             `;
             overlay.appendChild(panel);
+            let cleanupModal;
+            closeOverlay = () => { cleanupModal?.(); overlay.remove(); };
+            cleanupModal = ModalA11yModule.attach(overlay, panel, closeOverlay);
             document.body.appendChild(overlay);
-            document.addEventListener('keydown', function esc(e) {
-                if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); }
-            });
         },
 
         showCommandLine() {
             const existing = document.querySelector('.rel-command-line');
-            if (existing) { existing.remove(); return; }
+            if (existing) { ModalA11yModule.current?.cleanup?.(); existing.remove(); return; }
 
+            let closeCommand = () => {};
             const t = Themes.getTheme();
             const cl = Utils.createElement('div', {
                 className: 'rel-command-line',
@@ -5371,7 +5453,7 @@
             });
 
             input.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') { cl.remove(); return; }
+                if (e.key === 'Escape') { closeCommand(); return; }
                 if (e.key !== 'Enter') return;
                 const val = input.value.trim();
                 if (!val) return;
@@ -5385,12 +5467,13 @@
             });
 
             cl.appendChild(input);
+            let cleanupModal;
+            const outsideHandler = event => { if (!cl.contains(event.target)) closeCommand(); };
+            closeCommand = () => { cleanupModal?.(); cl.remove(); document.removeEventListener('click', outsideHandler); };
+            cleanupModal = ModalA11yModule.attach(cl, cl, closeCommand);
             document.body.appendChild(cl);
             setTimeout(() => input.focus(), 50);
-
-            document.addEventListener('click', function handler(e) {
-                if (!cl.contains(e.target)) { cl.remove(); document.removeEventListener('click', handler); }
-            });
+            document.addEventListener('click', outsideHandler);
         }
     };
 
@@ -8361,6 +8444,7 @@
     // =========================================================================
     const MultiRedditModule = {
         overlay: null,
+        modalCleanup: null,
 
         normalizeSubreddit(value) {
             const name = String(value || '').trim().replace(/^\/r\//i, '').replace(/^r\//i, '');
@@ -8425,7 +8509,7 @@
         },
 
         showBuilder(editItem = null) {
-            if (this.overlay) this.overlay.remove();
+            if (this.overlay) this.close();
             const t = Themes.getTheme();
             const overlay = Utils.createElement('div', {
                 className: 'rel-multi-reddit-overlay',
@@ -8494,11 +8578,13 @@
             overlay.addEventListener('click', event => { if (event.target === overlay) this.close(); });
             document.body.appendChild(overlay);
             this.overlay = overlay;
-            document.addEventListener('keydown', this.escapeHandler = event => { if (event.key === 'Escape') this.close(); }, { once: true });
+            this.modalCleanup = ModalA11yModule.attach(overlay, panel, () => this.close());
             name.focus();
         },
 
         close() {
+            this.modalCleanup?.();
+            this.modalCleanup = null;
             if (this.overlay) this.overlay.remove();
             this.overlay = null;
         },
@@ -8678,6 +8764,8 @@
             validateCanaryPayload: ApiCanaryModule.validatePayload.bind(ApiCanaryModule),
             shouldCheckApiCanary: ApiCanaryModule.shouldCheck.bind(ApiCanaryModule),
             classifySwipe: TouchGestureModule.classifySwipe.bind(TouchGestureModule),
+            getNextFocusIndex: ModalA11yModule.getNextFocusIndex.bind(ModalA11yModule),
+            getDialogAttributes: ModalA11yModule.getDialogAttributes.bind(ModalA11yModule),
             createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
             observeForTest: ObserverRegistry.observe.bind(ObserverRegistry),
             disconnectObservers: ObserverRegistry.disconnectAll.bind(ObserverRegistry),

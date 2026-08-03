@@ -93,6 +93,7 @@ Every theme provides full coverage across all Reddit elements — headers, sideb
 ### Appearance & UI
 
 - **Enhanced UI** — Modern typography system, card-style post layout, polished interactions and hover effects
+- **Accessible dialogs** — Settings, keyboard help, command line, and multi-reddit dialogs expose ARIA roles and trap/restore focus
 - **Collapsible Sidebar** — Toggle sidebar visibility with a floating tab
 - **Wide View** — Expand content area to full screen width
 - **Custom CSS** — Add your own CSS rules via the settings panel
