@@ -121,7 +121,7 @@ All settings are accessible from the **⚙** gear icon in the bottom-right corne
 | **Diff** | See every non-default setting with redacted secrets and per-setting reset controls |
 | **Filtering** | Keyword/domain/subreddit/flair/user filters, regex, NSFW toggle, ignore list |
 | **Privacy** | No participation mode, ad blocker |
-| **Backup** | Export/import all settings, tags, filters, and macros as JSON |
+| **Backup** | Export/import all settings, tags, filters, and macros as JSON; factory reset automatically saves a recoverable backup |
 
 Changes auto-save. Some settings (like theme switching and button hiding) apply instantly; others require a page reload.
 

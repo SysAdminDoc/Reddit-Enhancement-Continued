@@ -180,6 +180,21 @@
         remove(key) {
             GM_deleteValue(key);
         },
+        downloadJSON(json, filename) {
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        },
+        createFactoryBackup() {
+            const payload = this.exportAll();
+            this.set(FACTORY_BACKUP_KEY, { version: VERSION, createdAt: new Date().toISOString(), payload });
+            try { this.downloadJSON(payload, `rel-factory-backup-${new Date().toISOString().slice(0, 10)}.json`); } catch {}
+            return payload;
+        },
         exportAll() {
             const data = {};
             Object.entries(CONFIG.storageKeys).forEach(([name, key]) => {
@@ -202,6 +217,7 @@
         }
     };
 
+    const FACTORY_BACKUP_KEY = 'rel_factory_backup_v1';
     const SHARED_SETTINGS_KEY = 'rel_settings_v2';
     const PROFILE_MODE_KEY = 'rel_profile_mode_v1';
     const PROFILE_ID_KEY = 'rel_profile_id_v1';
@@ -2972,11 +2988,7 @@
                 className: 'rel-btn-small rel-btn-primary', textContent: 'Export Settings',
                 onClick: () => {
                     const data = Storage.exportAll();
-                    const blob = new Blob([data], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = `rel-backup-${new Date().toISOString().slice(0,10)}.json`;
-                    a.click(); URL.revokeObjectURL(url);
+                    Storage.downloadJSON(data, `rel-backup-${new Date().toISOString().slice(0,10)}.json`);
                     Utils.notify('Settings exported!', 'success');
                 }
             });
@@ -3008,8 +3020,9 @@
                 className: 'rel-btn-small rel-btn-danger', textContent: 'Reset All',
                 onClick: () => {
                     if (confirm('Reset ALL Reddit Enhancement Continued settings to defaults? This cannot be undone.')) {
+                        Storage.createFactoryBackup();
                         Object.values(CONFIG.storageKeys).forEach(key => Storage.remove(key));
-                        Utils.notify('All settings reset. Reloading...', 'warning');
+                        Utils.notify('Backup saved and all settings reset. Reloading...', 'warning');
                         setTimeout(() => location.reload(), 1000);
                     }
                 }
@@ -3029,6 +3042,19 @@
                 }
             });
             section.appendChild(copyBtn);
+
+            const factoryBackup = Storage.get(FACTORY_BACKUP_KEY, null);
+            if (factoryBackup?.payload) {
+                const factoryBtn = Utils.createElement('button', {
+                    className: 'rel-btn-small rel-btn-secondary', textContent: 'Download Last Factory Backup',
+                    style: { marginLeft: '8px' },
+                    onClick: () => {
+                        Storage.downloadJSON(factoryBackup.payload, `rel-factory-backup-${String(factoryBackup.createdAt || '').slice(0, 10) || 'saved'}.json`);
+                        Utils.notify('Factory backup downloaded', 'success');
+                    }
+                });
+                copyBtn.after(factoryBtn);
+            }
 
             // User Tags export/import
             const tagLabel = Utils.createElement('h3', {
@@ -8454,6 +8480,7 @@
             buildProfileStorageKey,
             getProfileMode: ProfileModule.getMode.bind(ProfileModule),
             getSettingsDiff: SettingsDiffModule.getDiff.bind(SettingsDiffModule),
+            createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });

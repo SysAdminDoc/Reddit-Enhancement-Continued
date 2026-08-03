@@ -26,6 +26,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Opt-in AES-GCM encrypted sync snapshots with private Gist, Pastebin, and WebDAV adapters; passphrases are never stored.
 - Added: Per-device settings profile scope with safe shared/device store switching and reload handoff.
 - Added: Settings Diff tab with compact non-default values, sync-secret redaction, and individual reset actions.
+- Changed: Factory reset now saves and downloads a pre-reset backup and preserves the last backup for later retrieval.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 
