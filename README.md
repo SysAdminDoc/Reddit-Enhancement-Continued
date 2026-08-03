@@ -98,6 +98,7 @@ Every theme provides full coverage across all Reddit elements — headers, sideb
 - **Collapsible Sidebar** — Toggle sidebar visibility with a floating tab
 - **Wide View** — Expand content area to full screen width
 - **Custom CSS** — Add your own CSS rules via the settings panel
+- **Theme Palette Editor** — Edit safe color tokens per theme and export/import palette JSON
 - **Remove Subreddit Styles** — Strip custom CSS from subreddits for a consistent look
 - **Classic Snoo Favicon** — Restores the 2006–2022 Reddit favicon
 - **Hide Buttons** — Individually toggle hide/show for Gold, Share, Save, Crosspost, and Report buttons

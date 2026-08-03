@@ -74,7 +74,8 @@
             commentMacros: 'rel_comment_macros',
             settingsBackup: 'rel_backup',
             savedViews: 'rel_saved_views_v1',
-            multiReddits: 'rel_multireddits_v1'
+            multiReddits: 'rel_multireddits_v1',
+            customPalettes: 'rel_custom_palettes_v1'
         },
         defaults: {
             // Core
@@ -309,6 +310,8 @@
     if (!Array.isArray(savedViews)) savedViews = [];
     let multiReddits = Storage.get(CONFIG.storageKeys.multiReddits, []);
     if (!Array.isArray(multiReddits)) multiReddits = [];
+    let customPalettes = Storage.get(CONFIG.storageKeys.customPalettes, {});
+    if (!customPalettes || typeof customPalettes !== 'object' || Array.isArray(customPalettes)) customPalettes = {};
 
     function saveSettings() { Storage.set(CONFIG.storageKeys.settings, settings); }
     function saveUserTags() { Storage.set(CONFIG.storageKeys.userTags, userTags); }
@@ -904,7 +907,9 @@
         },
 
         getTheme() {
-            return this.definitions[settings.theme] || this.definitions.dracula;
+            const base = this.definitions[settings.theme] || this.definitions.dracula;
+            const overrides = customPalettes[settings.theme] || {};
+            return { ...base, ...overrides };
         },
 
         isDark() {
@@ -1336,6 +1341,86 @@
             `;
         }
     };
+
+    // =========================================================================
+    // THEME PALETTE MODULE
+    // =========================================================================
+    const PaletteModule = {
+        PALETTE_KEYS: [
+            'bg', 'bgAlt', 'bgLight', 'surface', 'surfaceHover', 'fg', 'fgMuted', 'fgDim',
+            'accent', 'accentHover', 'link', 'linkVisited', 'upvote', 'downvote', 'border',
+            'borderLight', 'success', 'warning', 'error', 'highlight', 'selection', 'headerBg',
+            'headerFg', 'inputBg', 'inputFg', 'inputBorder', 'tagBg', 'tagFg', 'buttonBg',
+            'buttonFg', 'shadow', 'overlay', 'scrollbar', 'scrollbarHover'
+        ],
+
+        normalizeValue(value) {
+            const candidate = String(value || '').trim();
+            if (/^#[0-9a-f]{3,8}$/i.test(candidate)) return candidate;
+            if (/^(?:rgba?|hsla?)\([0-9.%\s,]+\)$/i.test(candidate)) return candidate;
+            if (/^[a-z]+$/i.test(candidate) && ['transparent', 'black', 'white', 'inherit', 'currentcolor'].includes(candidate.toLowerCase())) return candidate;
+            return null;
+        },
+
+        normalizePalettes(source) {
+            if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
+            const result = {};
+            Object.entries(source).forEach(([themeId, palette]) => {
+                if (!Themes.definitions[themeId] || !palette || typeof palette !== 'object' || Array.isArray(palette)) return;
+                const safe = {};
+                this.PALETTE_KEYS.forEach(key => {
+                    const value = this.normalizeValue(palette[key]);
+                    if (value) safe[key] = value;
+                });
+                if (Object.keys(safe).length) result[themeId] = safe;
+            });
+            return result;
+        },
+
+        setOverride(themeId, key, value) {
+            if (!Themes.definitions[themeId] || !this.PALETTE_KEYS.includes(key)) return false;
+            const safe = this.normalizeValue(value);
+            if (!safe) {
+                Utils.notify('Use a hex, rgba/hsla, or basic CSS color value.', 'warning');
+                return false;
+            }
+            const base = Themes.definitions[themeId][key];
+            if (safe === base) {
+                if (customPalettes[themeId]) delete customPalettes[themeId][key];
+            } else {
+                customPalettes[themeId] = { ...(customPalettes[themeId] || {}), [key]: safe };
+            }
+            if (customPalettes[themeId] && Object.keys(customPalettes[themeId]).length === 0) delete customPalettes[themeId];
+            Storage.set(CONFIG.storageKeys.customPalettes, customPalettes);
+            SettingsModule.applyThemeCSS();
+            return true;
+        },
+
+        reset(themeId) {
+            if (!Themes.definitions[themeId]) return false;
+            delete customPalettes[themeId];
+            Storage.set(CONFIG.storageKeys.customPalettes, customPalettes);
+            SettingsModule.applyThemeCSS();
+            Utils.notify(`Reset ${Themes.definitions[themeId].name} palette`, 'success');
+            return true;
+        },
+
+        serialize() {
+            return JSON.stringify(customPalettes, null, 2);
+        },
+
+        importSerialized(serialized) {
+            try {
+                const parsed = JSON.parse(serialized);
+                const normalized = this.normalizePalettes(parsed);
+                customPalettes = normalized;
+                Storage.set(CONFIG.storageKeys.customPalettes, customPalettes);
+                SettingsModule.applyThemeCSS();
+                return true;
+            } catch { return false; }
+        }
+    };
+    customPalettes = PaletteModule.normalizePalettes(customPalettes);
 
     // =========================================================================
     // BASE STYLES
@@ -2387,7 +2472,8 @@
                     { key: 'removeSubredditStyles', label: 'Remove Subreddit Styles', desc: 'Strip custom CSS from subreddits for consistent dark mode' },
                     { key: 'wideView', label: 'Wide View', desc: 'Expand content area to use full screen width' },
                     { key: 'enhancedUI', label: 'Enhanced UI', desc: 'Modern typography, card layouts, rainbow threads, polished interactions' },
-                    { key: 'discordLayout', label: 'Discord-Style Layout (Experimental)', desc: 'Use channel-like headers and chat-style cards; reload to apply' }
+                    { key: 'discordLayout', label: 'Discord-Style Layout (Experimental)', desc: 'Use channel-like headers and chat-style cards; reload to apply' },
+                    { type: 'paletteEditor' }
                 ],
                 content: [
                     { key: 'inlineImageExpansion', label: 'Inline Image Expansion', desc: 'Expand images and videos inline' },
@@ -2515,6 +2601,8 @@
                 defs.forEach(def => {
                     if (def.type === 'theme') {
                         content.appendChild(this.buildThemePicker());
+                    } else if (def.type === 'paletteEditor') {
+                        content.appendChild(this.buildPaletteEditor());
                     } else if (def.type === 'filterEditor') {
                         content.appendChild(this.buildFilterEditor());
                     } else if (def.type === 'commentSweep') {
@@ -2659,6 +2747,59 @@
                 saveSettings();
             }, 500));
             section.appendChild(ta);
+            return section;
+        },
+
+        buildPaletteEditor() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Theme Palette Editor</h3><div class="rel-setting-desc" style="margin-bottom:8px;">Edit safe color tokens for a theme. Overrides are stored separately from built-in themes and can be exported or reset.</div>';
+            const themeSelect = Utils.createElement('select', { className: 'rel-select', style: { marginBottom: '8px' } });
+            Object.entries(Themes.definitions).forEach(([id, theme]) => {
+                const option = Utils.createElement('option', { value: id, textContent: theme.name });
+                if (id === settings.theme) option.selected = true;
+                themeSelect.appendChild(option);
+            });
+            section.appendChild(themeSelect);
+            const grid = Utils.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(110px, 1fr) minmax(130px, 1fr)', gap: '5px 8px', maxHeight: '360px', overflowY: 'auto' } });
+            const render = () => {
+                grid.innerHTML = '';
+                const id = themeSelect.value;
+                const base = Themes.definitions[id] || Themes.definitions.dracula;
+                const overrides = customPalettes[id] || {};
+                PaletteModule.PALETTE_KEYS.forEach(key => {
+                    const label = Utils.createElement('label', { textContent: key.replace(/[A-Z]/g, match => ` ${match}`).replace(/^./, match => match.toUpperCase()), style: { fontSize: '11px', alignSelf: 'center' } });
+                    const value = overrides[key] || base[key] || '';
+                    const input = Utils.createElement('input', {
+                        type: /^#[0-9a-f]{6}$/i.test(value) ? 'color' : 'text',
+                        className: 'rel-input', value,
+                        style: { width: '100%', boxSizing: 'border-box', minHeight: '26px' }
+                    });
+                    input.title = value;
+                    input.addEventListener('change', () => PaletteModule.setOverride(id, key, input.value));
+                    grid.appendChild(label);
+                    grid.appendChild(input);
+                });
+            };
+            themeSelect.addEventListener('change', render);
+            render();
+            section.appendChild(grid);
+            const actions = Utils.createElement('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' } });
+            actions.appendChild(Utils.createElement('button', { className: 'rel-btn-small rel-btn-secondary', textContent: 'Reset Theme Palette', type: 'button', onClick: () => { PaletteModule.reset(themeSelect.value); render(); } }));
+            actions.appendChild(Utils.createElement('button', { className: 'rel-btn-small rel-btn-secondary', textContent: 'Export Palettes', type: 'button', onClick: () => { Storage.downloadJSON(PaletteModule.serialize(), `rel-palettes-${new Date().toISOString().slice(0, 10)}.json`); Utils.notify('Theme palettes exported', 'success'); } }));
+            const importInput = Utils.createElement('input', { type: 'file', accept: '.json', style: { display: 'none' } });
+            importInput.addEventListener('change', () => {
+                const file = importInput.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    if (PaletteModule.importSerialized(reader.result)) { render(); Utils.notify('Theme palettes imported', 'success'); }
+                    else Utils.notify('Invalid palette file', 'error');
+                };
+                reader.readAsText(file);
+            });
+            actions.appendChild(Utils.createElement('button', { className: 'rel-btn-small rel-btn-secondary', textContent: 'Import Palettes', type: 'button', onClick: () => importInput.click() }));
+            section.appendChild(actions);
+            section.appendChild(importInput);
             return section;
         },
 
@@ -8847,6 +8988,8 @@
             getDialogAttributes: ModalA11yModule.getDialogAttributes.bind(ModalA11yModule),
             getDiscordChannelLabel: DiscordLayoutModule.getChannelLabel.bind(DiscordLayoutModule),
             getDiscordInitials: DiscordLayoutModule.getInitials.bind(DiscordLayoutModule),
+            normalizePaletteValue: PaletteModule.normalizeValue.bind(PaletteModule),
+            normalizePalettes: PaletteModule.normalizePalettes.bind(PaletteModule),
             createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
             observeForTest: ObserverRegistry.observe.bind(ObserverRegistry),
             disconnectObservers: ObserverRegistry.disconnectAll.bind(ObserverRegistry),
