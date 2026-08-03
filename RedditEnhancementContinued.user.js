@@ -38,6 +38,8 @@
 // @connect      imgbb.com
 // @connect      ibb.co
 // @connect      i.ibb.co
+// @connect      cdn.syndication.twimg.com
+// @connect      publish.twitter.com
 // @connect      reddit.com
 // @connect      old.reddit.com
 // @connect      www.reddit.com
@@ -4455,6 +4457,172 @@
             twitter: { pattern: /(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/, label: 'Tweet' },
         },
 
+        requestJSON(url) {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    headers: { Accept: 'application/json' },
+                    timeout: 15000,
+                    onload: (response) => {
+                        if (response.status < 200 || response.status >= 300) {
+                            reject(new Error(`Request failed with status ${response.status}`));
+                            return;
+                        }
+                        try { resolve(JSON.parse(response.responseText)); }
+                        catch (error) { reject(error); }
+                    },
+                    onerror: () => reject(new Error('Network request failed')),
+                    ontimeout: () => reject(new Error('Network request timed out'))
+                });
+            });
+        },
+
+        extractTweetId(url) {
+            const match = url.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/i);
+            return match ? match[1] : null;
+        },
+
+        selectTweetMedia(data) {
+            const media = [];
+            const add = (item, type = item?.type) => {
+                if (!item) return;
+                const url = item.media_url_https || item.media_url || item.url;
+                if (!url || !/^https?:\/\//i.test(url)) return;
+                if (!media.some(entry => entry.url === url)) {
+                    media.push({
+                        url,
+                        type: type || 'photo',
+                        width: Number(item.original_info?.width || item.width || 0),
+                        height: Number(item.original_info?.height || item.height || 0),
+                        poster: item.media_url_https || item.media_url || '',
+                        variants: item.video_info?.variants || []
+                    });
+                }
+            };
+
+            (data?.mediaDetails || data?.media_details || []).forEach(item => add(item));
+            (data?.photos || []).forEach(item => add(item, 'photo'));
+            return media;
+        },
+
+        async fetchTweetPreview(id) {
+            const syndication = await this.requestJSON(
+                `https://cdn.syndication.twimg.com/tweet-result?id=${encodeURIComponent(id)}&lang=en`
+            );
+            if (syndication && typeof syndication === 'object' && Object.keys(syndication).length > 0) {
+                return { kind: 'syndication', data: syndication };
+            }
+
+            const oembed = await this.requestJSON(
+                `https://publish.twitter.com/oembed?url=${encodeURIComponent(`https://x.com/i/status/${id}`)}&omit_script=1`
+            );
+            if (oembed?.html) return { kind: 'oembed', data: oembed };
+            throw new Error('Tweet preview unavailable');
+        },
+
+        appendSyndicationPreview(preview, tweet, link) {
+            const t = Themes.getTheme();
+            const user = tweet.user || {};
+            const header = document.createElement('div');
+            header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
+
+            if (user.profile_image_url_https) {
+                const avatar = document.createElement('img');
+                avatar.src = user.profile_image_url_https;
+                avatar.alt = '';
+                avatar.width = 32;
+                avatar.height = 32;
+                avatar.style.cssText = 'width:32px;height:32px;border-radius:50%;';
+                header.appendChild(avatar);
+            }
+
+            const identity = document.createElement('div');
+            const name = document.createElement('strong');
+            name.textContent = user.name || 'X user';
+            identity.appendChild(name);
+            if (user.screen_name) {
+                const handle = document.createElement('span');
+                handle.textContent = ` @${user.screen_name}`;
+                handle.style.opacity = '0.7';
+                identity.appendChild(handle);
+            }
+            header.appendChild(identity);
+            preview.appendChild(header);
+
+            const text = document.createElement('p');
+            text.textContent = tweet.text || tweet.full_text || '';
+            text.style.cssText = 'margin:0 0 8px;white-space:pre-wrap;line-height:1.45;';
+            preview.appendChild(text);
+
+            const media = this.selectTweetMedia(tweet).slice(0, 4);
+            media.forEach(item => {
+                if (item.type === 'video' || item.variants.some(variant => variant.content_type === 'video/mp4')) {
+                    const variants = item.variants
+                        .filter(variant => variant.content_type === 'video/mp4' && variant.url)
+                        .sort((a, b) => Number(b.bitrate || 0) - Number(a.bitrate || 0));
+                    const video = document.createElement('video');
+                    video.controls = true;
+                    video.preload = 'metadata';
+                    video.playsInline = true;
+                    video.src = variants[0]?.url || item.url;
+                    video.poster = item.poster;
+                    video.style.cssText = 'display:block;max-width:100%;max-height:480px;margin:6px 0;border-radius:4px;background:#000;';
+                    preview.appendChild(video);
+                } else {
+                    const image = document.createElement('img');
+                    image.src = item.url;
+                    image.alt = 'Image attached to post';
+                    image.loading = 'lazy';
+                    image.style.cssText = 'display:block;max-width:100%;max-height:480px;margin:6px 0;border-radius:4px;';
+                    preview.appendChild(image);
+                }
+            });
+
+            const stats = document.createElement('div');
+            stats.style.cssText = `font-size:11px;color:${t.fgMuted};margin-top:8px;`;
+            const statParts = [];
+            if (tweet.like_count != null) statParts.push(`${tweet.like_count} likes`);
+            if (tweet.retweet_count != null) statParts.push(`${tweet.retweet_count} reposts`);
+            if (tweet.reply_count != null) statParts.push(`${tweet.reply_count} replies`);
+            stats.textContent = statParts.join(' \u2022 ');
+            if (stats.textContent) preview.appendChild(stats);
+
+            const open = document.createElement('a');
+            open.href = link.href;
+            open.target = '_blank';
+            open.rel = 'noopener noreferrer';
+            open.textContent = 'Open on X \u2197';
+            open.style.cssText = `display:inline-block;margin-top:8px;color:${settings.darkMode ? t.accent : '#1da1f2'};`;
+            preview.appendChild(open);
+        },
+
+        appendOEmbedPreview(preview, oembed, link) {
+            try {
+                const parsed = new DOMParser().parseFromString(oembed.html, 'text/html');
+                parsed.querySelectorAll('script, iframe, object, embed').forEach(node => node.remove());
+                const blockquote = parsed.body.firstElementChild;
+                if (!blockquote) throw new Error('No oEmbed markup');
+                preview.appendChild(document.importNode(blockquote, true));
+            } catch {
+                const fallback = document.createElement('a');
+                fallback.href = link.href;
+                fallback.target = '_blank';
+                fallback.rel = 'noopener noreferrer';
+                fallback.textContent = 'Open post on X \u2197';
+                preview.appendChild(fallback);
+            }
+        },
+
+        async renderPreview(preview, link, config) {
+            const id = this.extractTweetId(link.href);
+            if (!id || config.label !== 'Tweet') throw new Error('Unsupported social link');
+            const result = await this.fetchTweetPreview(id);
+            preview.textContent = '';
+            if (result.kind === 'syndication') this.appendSyndicationPreview(preview, result.data, link);
+            else this.appendOEmbedPreview(preview, result.data, link);
+        },
+
         init() {
             if (!settings.embedSocialMedia) return;
             this.process(document);
@@ -4473,10 +4641,10 @@
                             style: { marginLeft: '4px', fontSize: '10px' },
                             onClick: (e) => {
                                 e.preventDefault();
-                                const existing = link.parentNode.querySelector('.rel-social-preview');
-                                if (existing) { existing.remove(); return; }
-                                const t = Themes.getTheme();
-                                const preview = Utils.createElement('div', {
+                            const existing = link.parentNode.querySelector('.rel-social-preview');
+                            if (existing) { existing.remove(); return; }
+                            const t = Themes.getTheme();
+                            const preview = Utils.createElement('div', {
                                     className: 'rel-social-preview',
                                     style: {
                                         margin: '6px 0', padding: '10px', borderRadius: '6px',
@@ -4484,9 +4652,19 @@
                                         background: settings.darkMode ? t.bgLight : '#f0f0f0',
                                         fontSize: '12px'
                                     },
-                                    innerHTML: `<a href="${Utils.escapeHTML(link.href)}" target="_blank" style="color:${settings.darkMode ? t.accent : '#1da1f2'}">Open ${config.label} in new tab \u2197</a>`
+                                    textContent: `Loading ${config.label}...`
                                 });
                                 link.parentNode.insertBefore(preview, link.nextSibling);
+                                this.renderPreview(preview, link, config).catch(() => {
+                                    preview.textContent = '';
+                                    const fallback = document.createElement('a');
+                                    fallback.href = link.href;
+                                    fallback.target = '_blank';
+                                    fallback.rel = 'noopener noreferrer';
+                                    fallback.textContent = `Open ${config.label} in new tab \u2197`;
+                                    fallback.style.color = settings.darkMode ? t.accent : '#1da1f2';
+                                    preview.appendChild(fallback);
+                                });
                             }
                         });
                         link.parentNode.insertBefore(btn, link.nextSibling);
@@ -6228,7 +6406,9 @@
             selectRedgifsMedia: ImageExpansionModule.selectRedgifsMedia.bind(ImageExpansionModule),
             selectStreamableFile: ImageExpansionModule.selectStreamableFile.bind(ImageExpansionModule),
             isSupportedImageUrl: ImageExpansionModule.isSupportedImageUrl.bind(ImageExpansionModule),
-            extractImageUrlsFromHTML: ImageExpansionModule.extractImageUrlsFromHTML.bind(ImageExpansionModule)
+            extractImageUrlsFromHTML: ImageExpansionModule.extractImageUrlsFromHTML.bind(ImageExpansionModule),
+            extractTweetId: SocialMediaPreviewModule.extractTweetId.bind(SocialMediaPreviewModule),
+            selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule)
         });
     }
 
