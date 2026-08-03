@@ -82,6 +82,8 @@
             userTagging: true,
             keyboardNav: true,
             commentHighlighting: true,
+            liveCommentRefresh: false,
+            liveCommentRefreshSeconds: 60,
             collapseChildComments: true,
             collapseChildCommentsDefault: true,
             collapseChildCommentsNested: false,
@@ -2180,6 +2182,8 @@
                     { key: 'formattingToolbar', label: 'Formatting Toolbar', desc: 'Markdown formatting buttons and live preview' },
                     { key: 'livePreview', label: 'Live Preview', desc: 'Preview markdown as you type' },
                     { key: 'expandContinueThread', label: 'Expand Continue Thread', desc: 'Load continued threads inline' },
+                    { key: 'liveCommentRefresh', label: 'Live Comment Refresh', desc: 'Insert new comments without reloading the page' },
+                    { key: 'liveCommentRefreshSeconds', label: 'Refresh Interval (seconds)', desc: 'Automatic comment refresh interval (15-600)', type: 'number', min: 15, max: 600 },
                     { key: 'hideAutoModerator', label: 'Hide Bot Comments', desc: 'Auto-collapse AutoModerator, mod-bots, and other known bot comments' },
                     { key: 'depthColorScheme', label: 'Depth Colors', desc: 'Color scheme for depth indicators', type: 'select',
                       options: [
@@ -4325,6 +4329,142 @@
                 if (visitedComments[key] < weekAgo) delete visitedComments[key];
             });
             saveVisitedComments();
+        }
+    };
+
+    // =========================================================================
+    // LIVE COMMENT REFRESH MODULE
+    // =========================================================================
+    const CommentRefreshModule = {
+        intervalId: null,
+        loading: false,
+
+        init() {
+            if (!settings.liveCommentRefresh || !Utils.isCommentsPage()) return;
+            GM_addStyle(`
+                .rel-new-comment > .entry { outline: 2px solid ${Themes.getTheme().success}; outline-offset: 2px; background: color-mix(in srgb, ${Themes.getTheme().success} 8%, transparent); }
+                .rel-new-comment-label { margin-left: 6px; border: 0; background: transparent; color: ${Themes.getTheme().success}; cursor: pointer; font-size: 11px; font-weight: bold; }
+            `);
+            const host = document.querySelector('.commentarea .menuarea') || document.querySelector('.commentarea .panestack-title');
+            if (!host) return;
+
+            const button = Utils.createElement('button', {
+                className: 'rel-btn-small rel-btn-secondary rel-comment-refresh',
+                textContent: '\u21BB Refresh comments',
+                title: 'Load new comments without reloading the page',
+                style: { marginLeft: '8px' },
+                onClick: () => this.refresh()
+            });
+            const status = Utils.createElement('span', {
+                className: 'rel-comment-refresh-status',
+                style: { marginLeft: '6px', fontSize: '11px', opacity: '0.7' }
+            });
+            host.appendChild(button);
+            host.appendChild(status);
+            this.statusElement = status;
+            const seconds = Math.max(15, Math.min(600, Number(settings.liveCommentRefreshSeconds) || 60));
+            this.intervalId = setInterval(() => this.refresh(), seconds * 1000);
+        },
+
+        buildRefreshUrl(href) {
+            const url = new URL(href);
+            url.searchParams.set('sort', 'new');
+            return url.href;
+        },
+
+        getCommentId(comment) {
+            return comment?.getAttribute('data-fullname') || comment?.id?.match(/(?:thing|comment)_?([a-z0-9]+)/i)?.[1] || null;
+        },
+
+        getParentId(comment) {
+            return comment?.getAttribute('data-parent-fullname') || null;
+        },
+
+        collectNewRoots(incoming, existingIds) {
+            const nodes = [...incoming].filter(node => {
+                const id = this.getCommentId(node);
+                return id && !existingIds.has(id);
+            });
+            const newIds = new Set(nodes.map(node => this.getCommentId(node)));
+            return nodes.filter(node => !newIds.has(this.getParentId(node)));
+        },
+
+        findComment(id) {
+            if (!id) return null;
+            return [...document.querySelectorAll('.comment[data-fullname]')]
+                .find(comment => this.getCommentId(comment) === id) || null;
+        },
+
+        markNew(comment) {
+            comment.classList.add('rel-new-comment');
+            const tagline = comment.querySelector('.tagline');
+            if (!tagline || tagline.querySelector('.rel-new-comment-label')) return;
+            const label = document.createElement('button');
+            label.type = 'button';
+            label.className = 'rel-new-comment-label';
+            label.textContent = '[new]';
+            label.title = 'Dismiss new-comment highlight';
+            label.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                comment.classList.remove('rel-new-comment');
+                label.remove();
+            });
+            tagline.appendChild(label);
+        },
+
+        appendRoot(node, existingIds) {
+            const parent = this.findComment(this.getParentId(node));
+            const target = parent?.querySelector(':scope > .child') ||
+                document.querySelector('.commentarea .sitetable.nestedlisting') ||
+                document.querySelector('.commentarea .sitetable');
+            if (!target) return 0;
+
+            const clone = node.cloneNode(true);
+            this.markNew(clone);
+            clone.querySelectorAll('.comment[data-fullname]').forEach(nested => {
+                if (nested !== clone && existingIds.has(this.getCommentId(nested))) nested.remove();
+            });
+            clone.querySelectorAll('.comment[data-fullname]').forEach(comment => this.markNew(comment));
+            target.appendChild(clone);
+            Utils.processNewContent(clone);
+            return clone.querySelectorAll('.comment[data-fullname]').length || 1;
+        },
+
+        setStatus(text, error = false) {
+            if (this.statusElement) {
+                this.statusElement.textContent = text;
+                this.statusElement.style.color = error ? Themes.getTheme().error : '';
+            }
+        },
+
+        async refresh() {
+            if (this.loading) return 0;
+            this.loading = true;
+            this.setStatus(' refreshing...');
+            try {
+                const existingIds = new Set([...document.querySelectorAll('.comment[data-fullname]')]
+                    .map(comment => this.getCommentId(comment)).filter(Boolean));
+                const response = await fetch(this.buildRefreshUrl(window.location.href), {
+                    credentials: 'same-origin',
+                    headers: { Accept: 'text/html' }
+                });
+                if (!response.ok) throw new Error(`Refresh failed: ${response.status}`);
+                const html = await response.text();
+                const parsed = new DOMParser().parseFromString(html, 'text/html');
+                const incoming = parsed.querySelectorAll('.comment[data-fullname]');
+                const roots = this.collectNewRoots(incoming, existingIds);
+                let added = 0;
+                roots.forEach(root => { added += this.appendRoot(root, existingIds); });
+                this.setStatus(added ? ` ${added} new comment${added === 1 ? '' : 's'}` : ' up to date');
+                return added;
+            } catch (error) {
+                console.warn('REL CommentRefreshModule:', error);
+                this.setStatus(' refresh failed', true);
+                return 0;
+            } finally {
+                this.loading = false;
+            }
         }
     };
 
@@ -7034,6 +7174,7 @@
             extractImageUrlsFromHTML: ImageExpansionModule.extractImageUrlsFromHTML.bind(ImageExpansionModule),
             extractTweetId: SocialMediaPreviewModule.extractTweetId.bind(SocialMediaPreviewModule),
             selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule),
+            buildRefreshUrl: CommentRefreshModule.buildRefreshUrl.bind(CommentRefreshModule),
             mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
             getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
             testRegexRule: FilterModule.testRegexRule.bind(FilterModule),
@@ -7085,6 +7226,7 @@
         IgnoredUsersModule.init();
         CommentNavigatorModule.init();
         CommentSearchModule.init();
+        CommentRefreshModule.init();
 
         // Fallback comment toggle - handles expand/collapse when Reddit's jQuery is broken
         // ($(...).thing / $(...).slideUp errors in reddit-init.js)
