@@ -2190,6 +2190,7 @@
                 { id: 'filtering', label: 'Filtering' },
                 { id: 'privacy', label: 'Privacy' },
                 { id: 'sync', label: 'Sync' },
+                { id: 'diff', label: 'Diff' },
                 { id: 'backup', label: 'Backup' }
             ];
 
@@ -2286,6 +2287,9 @@
                 sync: [
                     { type: 'sync' }
                 ],
+                diff: [
+                    { type: 'settingsDiff' }
+                ],
                 backup: [
                     { type: 'backupRestore' }
                 ]
@@ -2338,6 +2342,8 @@
                         content.appendChild(this.buildBackupRestore());
                     } else if (def.type === 'sync') {
                         content.appendChild(this.buildSyncSettings());
+                    } else if (def.type === 'settingsDiff') {
+                        content.appendChild(this.buildSettingsDiff());
                     } else if (def.type === 'ignoredUsers') {
                         content.appendChild(this.buildIgnoredUsers());
                     } else if (def.type === 'textarea') {
@@ -3180,6 +3186,43 @@
             return section;
         },
 
+        buildSettingsDiff() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Settings Diff</h3><div class="rel-setting-desc" style="margin-bottom:10px;">Only settings that differ from the built-in defaults are listed. Resetting a row changes that setting only.</div>';
+            const list = Utils.createElement('div', { style: { display: 'grid', gap: '6px' } });
+            const render = () => {
+                list.innerHTML = '';
+                const differences = SettingsDiffModule.getDiff(settings, CONFIG.defaults);
+                if (differences.length === 0) {
+                    list.appendChild(Utils.createElement('div', { textContent: 'This profile matches the built-in defaults.', style: { opacity: '0.7', fontSize: '12px' } }));
+                    return;
+                }
+                differences.forEach(difference => {
+                    const row = Utils.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) minmax(100px, 1.5fr) minmax(100px, 1.5fr) auto', gap: '6px', alignItems: 'center', padding: '6px', border: '1px solid rgba(128,128,128,0.3)', borderRadius: '4px', fontSize: '11px' } });
+                    row.appendChild(Utils.createElement('strong', { textContent: difference.key }));
+                    row.appendChild(Utils.createElement('span', { textContent: `Current: ${difference.current}` }));
+                    row.appendChild(Utils.createElement('span', { textContent: `Default: ${difference.defaultValue}`, style: { opacity: '0.7' } }));
+                    row.appendChild(Utils.createElement('button', {
+                        type: 'button', textContent: 'reset', className: 'rel-btn-small rel-btn-secondary',
+                        onClick: () => {
+                            if (difference.key === 'perDeviceProfile') {
+                                ProfileModule.setMode('shared');
+                                return;
+                            }
+                            settings[difference.key] = CONFIG.defaults[difference.key];
+                            saveSettings();
+                            render();
+                            Utils.notify(`Reset ${difference.key}`, 'success');
+                        }
+                    }));
+                    list.appendChild(row);
+                });
+            };
+            render();
+            section.appendChild(list);
+            return section;
+        },
+
         applyThemeCSS() {
             // Remove old theme styles
             document.querySelectorAll('[data-rel-theme]').forEach(el => el.remove());
@@ -3209,6 +3252,46 @@
                 style3.textContent = uxCSS;
                 document.head.appendChild(style3);
             }
+        }
+    };
+
+    // =========================================================================
+    // SETTINGS DIFF MODULE
+    // =========================================================================
+    const SettingsDiffModule = {
+        sensitiveKeys: new Set(['syncToken']),
+
+        equal(left, right) {
+            try { return JSON.stringify(left) === JSON.stringify(right); } catch { return left === right; }
+        },
+
+        formatValue(value, key = '') {
+            if (this.sensitiveKeys.has(key)) return value ? '[configured]' : '[empty]';
+            if (value === undefined) return '[missing]';
+            if (typeof value === 'string') {
+                const compact = value.replace(/\s+/g, ' ').trim();
+                return compact.length > 120 ? `${compact.slice(0, 117)}...` : (compact || '[empty]');
+            }
+            if (typeof value === 'object') {
+                try {
+                    const serialized = JSON.stringify(value);
+                    return serialized.length > 120 ? `${serialized.slice(0, 117)}...` : serialized;
+                } catch { return '[unserializable]'; }
+            }
+            return String(value);
+        },
+
+        getDiff(current = {}, defaults = CONFIG.defaults) {
+            const source = current && typeof current === 'object' ? current : {};
+            const baseline = defaults && typeof defaults === 'object' ? defaults : {};
+            return [...new Set([...Object.keys(baseline), ...Object.keys(source)])]
+                .filter(key => !key.startsWith('_') && !this.equal(source[key], baseline[key]))
+                .sort()
+                .map(key => ({
+                    key,
+                    current: this.formatValue(source[key], key),
+                    defaultValue: this.formatValue(baseline[key], key)
+                }));
         }
     };
 
@@ -8370,6 +8453,7 @@
             decryptSyncSnapshot: SyncModule.decryptSnapshot.bind(SyncModule),
             buildProfileStorageKey,
             getProfileMode: ProfileModule.getMode.bind(ProfileModule),
+            getSettingsDiff: SettingsDiffModule.getDiff.bind(SettingsDiffModule),
             normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
             matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });
