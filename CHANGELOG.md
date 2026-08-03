@@ -12,6 +12,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Per-subreddit filter overrides with inherited, replacement, and disabled modes.
 - Added: Named regex filter rules with flags, enable/disable controls, resettable persistent hit counts, and debounced storage writes.
 - Added: Typed plain-text block-list export/import with keyword compatibility, regex records, merge deduplication, and clipboard copy.
+- Added: Comment Sweep controls for persistent bulk tagging or hiding of matching loaded comment history.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

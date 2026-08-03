@@ -2204,6 +2204,7 @@
                     { key: 'postFiltering', label: 'Post Filtering', desc: 'Filter posts by keyword, domain, subreddit, flair' },
                     { key: 'userTagging', label: 'User Tagging', desc: 'Tag users with custom labels and colors' },
                     { key: 'userHighlighter', label: 'User Highlighter', desc: 'Color-code OP, mods, admins, and friends' },
+                    { type: 'commentSweep' },
                     { type: 'filterEditor' }
                 ],
                 privacy: [
@@ -2257,6 +2258,8 @@
                         content.appendChild(this.buildThemePicker());
                     } else if (def.type === 'filterEditor') {
                         content.appendChild(this.buildFilterEditor());
+                    } else if (def.type === 'commentSweep') {
+                        content.appendChild(this.buildCommentSweep());
                     } else if (def.type === 'backupRestore') {
                         content.appendChild(this.buildBackupRestore());
                     } else if (def.type === 'ignoredUsers') {
@@ -2840,6 +2843,41 @@
             return section;
         },
 
+        buildCommentSweep() {
+            const section = Utils.createElement('div', { className: 'rel-settings-section' });
+            section.innerHTML = '<h3>Comment Sweep</h3><div class="rel-setting-desc" style="margin-bottom:8px;">Bulk-tag or hide matching comments currently loaded on this page, including loaded thread history.</div>';
+            const row = Utils.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr auto 1fr auto', gap: '6px', alignItems: 'center' } });
+            const username = Utils.createElement('input', { className: 'rel-input', placeholder: 'username' });
+            const action = Utils.createElement('select', { className: 'rel-select' });
+            [['tag', 'Tag'], ['hide', 'Hide']].forEach(([value, label]) => action.appendChild(Utils.createElement('option', { value, textContent: label })));
+            const tagText = Utils.createElement('input', { className: 'rel-input', placeholder: 'tag text (for Tag)' });
+            const color = Utils.createElement('select', { className: 'rel-select' });
+            Object.keys(UserTaggingModule.tagColors).forEach(value => color.appendChild(Utils.createElement('option', { value, textContent: value })));
+            color.value = 'aqua';
+            const run = Utils.createElement('button', { className: 'rel-btn-small rel-btn-primary', textContent: 'Sweep' });
+            const status = Utils.createElement('div', { style: { marginTop: '6px', fontSize: '11px', opacity: '0.75' } });
+            const updateActionVisibility = () => {
+                tagText.style.display = action.value === 'tag' ? '' : 'none';
+                color.style.display = action.value === 'tag' ? '' : 'none';
+            };
+            action.addEventListener('change', updateActionVisibility);
+            run.addEventListener('click', () => {
+                const count = CommentSweepModule.sweep(username.value, action.value, tagText.value, color.value);
+                status.textContent = `${action.value === 'hide' ? 'Hidden' : 'Tagged'} ${count} matching comment${count === 1 ? '' : 's'}.`;
+                Utils.notify(status.textContent, count ? 'success' : 'info');
+            });
+            [username, tagText].forEach(input => input.addEventListener('keydown', event => { if (event.key === 'Enter') run.click(); }));
+            row.appendChild(username);
+            row.appendChild(action);
+            row.appendChild(tagText);
+            row.appendChild(color);
+            row.appendChild(run);
+            section.appendChild(row);
+            section.appendChild(status);
+            updateActionVisibility();
+            return section;
+        },
+
         buildBackupRestore() {
             const section = Utils.createElement('div', { className: 'rel-settings-section' });
             section.innerHTML = '<h3>Backup & Restore</h3><div class="rel-setting-desc" style="margin-bottom:10px;">Export or import all settings, tags, filters, and macros.</div>';
@@ -3230,6 +3268,51 @@
                     }
                 }
             });
+        }
+    };
+
+    // =========================================================================
+    // COMMENT SWEEP MODULE
+    // =========================================================================
+    const CommentSweepModule = {
+        normalizeUsername(username) {
+            return String(username || '').trim().replace(/^\/u\//i, '').trim();
+        },
+
+        matchesAuthor(author, username) {
+            const expected = this.normalizeUsername(username).toLowerCase();
+            return Boolean(expected && this.normalizeUsername(author).toLowerCase() === expected);
+        },
+
+        findMatchingComments(root, username) {
+            const expected = this.normalizeUsername(username);
+            if (!expected) return [];
+            return [...root.querySelectorAll('.comment')].filter(comment => {
+                const author = comment.getAttribute('data-author') || comment.querySelector('.author')?.textContent;
+                return this.matchesAuthor(author, expected);
+            });
+        },
+
+        sweep(username, action, tagText = 'swept', color = 'aqua') {
+            const normalized = this.normalizeUsername(username);
+            if (!normalized) return 0;
+            const comments = this.findMatchingComments(document, normalized);
+            if (action === 'hide') {
+                if (!ignoredUsers.some(user => this.matchesAuthor(user, normalized))) {
+                    ignoredUsers.push(normalized);
+                    saveIgnoredUsers();
+                }
+                // IgnoredUsersModule marks comments as processed. Clear only matching
+                // markers so a sweep can be safely repeated after initial page load.
+                comments.forEach(comment => comment.removeAttribute('data-rel-ignored'));
+                IgnoredUsersModule.process(document);
+            } else {
+                const canonical = comments[0]?.getAttribute('data-author') || comments[0]?.querySelector('.author')?.textContent || normalized;
+                userTags[canonical] = { text: String(tagText || 'swept').trim() || 'swept', color };
+                saveUserTags();
+                UserTaggingModule.updateAllTags(canonical);
+            }
+            return comments.length;
         }
     };
 
@@ -6931,7 +7014,9 @@
             getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
             testRegexRule: FilterModule.testRegexRule.bind(FilterModule),
             serializeBlockList: SettingsModule.serializeBlockList.bind(SettingsModule),
-            parseBlockList: SettingsModule.parseBlockList.bind(SettingsModule)
+            parseBlockList: SettingsModule.parseBlockList.bind(SettingsModule),
+            normalizeUsername: CommentSweepModule.normalizeUsername.bind(CommentSweepModule),
+            matchesAuthor: CommentSweepModule.matchesAuthor.bind(CommentSweepModule)
         });
     }
 
