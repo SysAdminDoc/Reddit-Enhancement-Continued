@@ -17,6 +17,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Opt-in live comment refresh with new-comment insertion, processing, highlight dismissal, and interval control.
 - Added: Per-comment citation quote action that formats selected text as Markdown blockquotes and inserts or copies it.
 - Added: Persistent per-user private notes in the existing tag records, with popup editing and user-info/hover display.
+- Added: Opt-in `>!...!<` spoiler parsing for comments and live Markdown preview with click-to-reveal behavior.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

@@ -82,6 +82,7 @@
             userTagging: true,
             keyboardNav: true,
             commentHighlighting: true,
+            spoilerTags: true,
             liveCommentRefresh: false,
             liveCommentRefreshSeconds: 60,
             collapseChildComments: true,
@@ -421,6 +422,7 @@
             if (settings.voteEnhancements) VoteEnhancementsModule.process(container);
             if (settings.formattingToolbar) FormattingToolbarModule.process(container);
             if (settings.formattingToolbar) QuoteSelectionModule.process(container);
+            if (settings.spoilerTags) SpoilerTagModule.process(container);
             if (settings.selectedEntryHighlight) SelectedEntryModule.process(container);
             if (settings.postFiltering) FilterModule.process(container);
             if (settings.noParticipation) NoParticipationModule.process(container);
@@ -1014,6 +1016,7 @@
                 .md sup { color: ${t.fgMuted} !important; }
                 .md .spoiler { background: ${t.surface} !important; color: transparent; }
                 .md .spoiler:hover { color: ${t.fg} !important; }
+                .md .spoiler.rel-spoiler-revealed { color: ${t.fg} !important; }
 
                 /* === EXPANDO === */
                 .expando {
@@ -2200,6 +2203,7 @@
                     { key: 'collapseChildCommentsHideNested', label: 'Hide Deeply Nested', desc: 'When hiding all, also recursively hide children of nested comments' },
                     { key: 'formattingToolbar', label: 'Formatting Toolbar', desc: 'Markdown formatting buttons and live preview' },
                     { key: 'livePreview', label: 'Live Preview', desc: 'Preview markdown as you type' },
+                    { key: 'spoilerTags', label: 'Inline Spoiler Tags', desc: 'Respect >!...!< spoiler syntax in comments' },
                     { key: 'expandContinueThread', label: 'Expand Continue Thread', desc: 'Load continued threads inline' },
                     { key: 'liveCommentRefresh', label: 'Live Comment Refresh', desc: 'Insert new comments without reloading the page' },
                     { key: 'liveCommentRefreshSeconds', label: 'Refresh Interval (seconds)', desc: 'Automatic comment refresh interval (15-600)', type: 'number', min: 15, max: 600 },
@@ -5899,6 +5903,8 @@
         renderMarkdown(text) {
             // Simple markdown rendering
             let html = Utils.escapeHTML(text);
+            // Reddit spoiler syntax: >!hidden text!<
+            if (settings.spoilerTags) html = html.replace(/&gt;!([\s\S]*?)!&lt;/g, '<span class="spoiler rel-inline-spoiler">$1</span>');
             // Bold
             html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
             // Italic
@@ -7256,6 +7262,47 @@
         }
     };
 
+    // =========================================================================
+    // INLINE SPOILER TAG MODULE
+    // =========================================================================
+    const SpoilerTagModule = {
+        extractSpoilerText(text) {
+            return [...String(text || '').matchAll(/>!([\s\S]*?)!</g)].map(match => match[1]);
+        },
+
+        process(container) {
+            if (!settings.spoilerTags) return;
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+            const textNodes = [];
+            let node;
+            while ((node = walker.nextNode())) textNodes.push(node);
+            textNodes.forEach(textNode => {
+                const parent = textNode.parentElement;
+                if (!parent || parent.closest('a, code, pre, .spoiler') || !this.extractSpoilerText(textNode.nodeValue).length) return;
+                const value = textNode.nodeValue;
+                const fragment = document.createDocumentFragment();
+                let cursor = 0;
+                const pattern = />!([\s\S]*?)!</g;
+                let match;
+                while ((match = pattern.exec(value))) {
+                    if (match.index > cursor) fragment.appendChild(document.createTextNode(value.slice(cursor, match.index)));
+                    const spoiler = document.createElement('span');
+                    spoiler.className = 'spoiler rel-inline-spoiler';
+                    spoiler.textContent = match[1];
+                    spoiler.title = 'Click to reveal spoiler';
+                    spoiler.addEventListener('click', event => {
+                        event.preventDefault();
+                        spoiler.classList.toggle('rel-spoiler-revealed');
+                    });
+                    fragment.appendChild(spoiler);
+                    cursor = match.index + match[0].length;
+                }
+                if (cursor < value.length) fragment.appendChild(document.createTextNode(value.slice(cursor)));
+                parent.replaceChild(fragment, textNode);
+            });
+        }
+    };
+
     if (window.__REC_TEST_HOOKS__) {
         Object.assign(window.__REC_TEST_HOOKS__, {
             parseGalleryImages: ImageExpansionModule.parseGalleryImages.bind(ImageExpansionModule),
@@ -7272,6 +7319,7 @@
             selectTweetMedia: SocialMediaPreviewModule.selectTweetMedia.bind(SocialMediaPreviewModule),
             buildRefreshUrl: CommentRefreshModule.buildRefreshUrl.bind(CommentRefreshModule),
             formatQuote: QuoteSelectionModule.formatQuote.bind(QuoteSelectionModule),
+            extractSpoilerText: SpoilerTagModule.extractSpoilerText.bind(SpoilerTagModule),
             normalizeUserTag,
             mergeSubredditFilters: FilterModule.mergeSubredditFilters.bind(FilterModule),
             getEffectiveFilters: FilterModule.getEffectiveFilters.bind(FilterModule),
@@ -7320,6 +7368,7 @@
         CommentDepthModule.init();
         FormattingToolbarModule.init();
         QuoteSelectionModule.init();
+        SpoilerTagModule.process(document);
         ExpandThreadModule.init();
         HideAutoModeratorModule.init();
         IgnoredUsersModule.init();
