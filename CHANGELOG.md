@@ -2,7 +2,7 @@
 
 All notable changes to Reddit-Enhancement-Continued will be documented in this file.
 
-## [Unreleased]
+## [2.8.2] - 2026-08-03
 
 - Added: Keyboard-driven gallery navigation with adjacent-image preloading and dimensions metadata.
 - Added: Resilient Redgifs v2 and Streamable API video expandos with signed-media and host-player fallbacks.
@@ -37,7 +37,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Added: Per-theme local font-pairing picker with system-only stacks and immediate CSS application.
 - Added: Opt-in local analytics panel with coarse counters and reset controls; no content or network telemetry is collected.
 
-## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
+## [v2.7.5]
 
 - Changed: Update RedditEnhancementContinued.user.js
 - Changed: Update RedditEnhancementContinued.user.js

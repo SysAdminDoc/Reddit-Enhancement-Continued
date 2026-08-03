@@ -38,7 +38,7 @@ vm.runInNewContext(source, {
 const payload = hooks.createFactoryBackup();
 assert.equal(typeof JSON.parse(payload), 'object');
 const stored = JSON.parse(values.get('rel_factory_backup_v1'));
-assert.equal(stored.version, '2.8.1');
+assert.equal(stored.version, '2.8.2');
 assert.equal(stored.payload, payload);
 
 console.log('Factory reset backup tests passed');

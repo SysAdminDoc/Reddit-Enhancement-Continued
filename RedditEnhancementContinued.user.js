@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Enhancement Continued
 // @namespace    https://github.com/SysAdminDoc/Reddit-Enhancement-Continued
-// @version      2.8.1
+// @version      2.8.2
 // @description  A comprehensive enhancement suite for old.reddit.com - themes, navigation, filtering, media, and more
 // @author       Reddit Enhancement Continued
 // @match        https://old.reddit.com/*
@@ -59,7 +59,7 @@
     // =========================================================================
     // CONFIGURATION & STORAGE
     // =========================================================================
-    const VERSION = '2.8.1';
+    const VERSION = '2.8.2';
 
     const CONFIG = {
         version: VERSION,

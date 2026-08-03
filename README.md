@@ -2,7 +2,7 @@
 
 A comprehensive enhancement suite for [old.reddit.com](https://old.reddit.com) — themes, media, comments, navigation, filtering, and more. Built as a single-file userscript with zero dependencies.
 
-![Version](https://img.shields.io/badge/version-2.7.5-blue)
+![Version](https://img.shields.io/badge/version-2.8.2-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-old.reddit.com-orange)
 
