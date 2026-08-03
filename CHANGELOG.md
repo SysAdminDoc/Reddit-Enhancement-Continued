@@ -30,6 +30,7 @@ All notable changes to Reddit-Enhancement-Continued will be documented in this f
 - Changed: MutationObservers now use keyed teardown/reconnection lifecycle management for SPA and bfcache transitions.
 - Added: NER long-scroll observer leak regression coverage that verifies repeated registration does not grow active observers.
 - Added: Configurable Reddit API canary check with cached interval status and warning toast on schema or reachability failures.
+- Added: Optional touch-device horizontal swipe navigation with configurable threshold and input/media exclusions.
 
 ## [v2.7.5] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

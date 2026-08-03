@@ -78,6 +78,7 @@ Every theme provides full coverage across all Reddit elements — headers, sideb
 - **Notification Redirect** — Redirects to `sh.reddit.com/notifications` (which actually works on old Reddit)
 - **State Saver** — Preserves scroll position when navigating back from posts
 - **API Canary** — Periodically checks a public Reddit JSON response and warns when the schema or endpoint becomes unavailable
+- **Touch Swipe Gestures** — On touch devices, horizontal swipes move between listing pages without affecting form or media controls
 
 ### Filtering & Privacy
 

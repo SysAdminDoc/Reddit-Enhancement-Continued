@@ -159,6 +159,8 @@
             markAllAsRead: true,
             apiCanary: true,
             apiCanaryIntervalHours: 24,
+            touchGestures: true,
+            touchSwipeThreshold: 80,
             // Migration flag (skip v2.2.1 migration for new installs)
             _migratedV221: true
         }
@@ -2366,7 +2368,9 @@
                     { key: 'stateSaver', label: 'State Saver', desc: 'Preserve scroll position when navigating back from posts' },
                     { key: 'notificationRedirect', label: 'Notification Redirect', desc: 'Redirect old.reddit.com/notifications to sh.reddit.com (which actually works)' },
                     { key: 'apiCanary', label: 'Reddit API Canary', desc: 'Periodically check a public JSON response for API/schema changes' },
-                    { key: 'apiCanaryIntervalHours', label: 'Canary Interval (hours)', desc: 'Minimum time between API canary checks (1-168)', type: 'number', min: 1, max: 168 }
+                    { key: 'apiCanaryIntervalHours', label: 'Canary Interval (hours)', desc: 'Minimum time between API canary checks (1-168)', type: 'number', min: 1, max: 168 },
+                    { key: 'touchGestures', label: 'Touch Swipe Gestures', desc: 'Use horizontal swipes to move between listing pages' },
+                    { key: 'touchSwipeThreshold', label: 'Swipe Threshold (px)', desc: 'Minimum horizontal movement for a swipe (40-240)', type: 'number', min: 40, max: 240 }
                 ],
                 filtering: [
                     { key: 'postFiltering', label: 'Post Filtering', desc: 'Filter posts by keyword, domain, subreddit, flair' },
@@ -7872,6 +7876,62 @@
     };
 
     // =========================================================================
+    // TOUCH SWIPE GESTURES MODULE
+    // =========================================================================
+    const TouchGestureModule = {
+        start: null,
+        classifySwipe(start, end, threshold = settings.touchSwipeThreshold) {
+            if (!start || !end) return null;
+            const dx = end.x - start.x;
+            const dy = end.y - start.y;
+            const minimum = Math.max(40, Math.min(240, Number(threshold) || 80));
+            if (Math.abs(dx) < minimum || Math.abs(dx) < Math.abs(dy) * 1.35) return null;
+            return dx < 0 ? 'next' : 'previous';
+        },
+
+        shouldIgnoreTarget(target) {
+            return !!target?.closest?.('input, textarea, select, button, a, [contenteditable="true"], .expando, .rel-settings-overlay, .rel-multi-reddit-overlay');
+        },
+
+        getPageLink(direction) {
+            const selectors = direction === 'next'
+                ? ['.next-button a', 'a[rel="next"]', '.nextprev a.next']
+                : ['.prev-button a', 'a[rel="prev"]', '.nextprev a.prev'];
+            for (const selector of selectors) {
+                const link = document.querySelector(selector);
+                if (link?.href) return link;
+            }
+            return null;
+        },
+
+        navigate(direction) {
+            const link = this.getPageLink(direction);
+            if (!link) return false;
+            window.location.href = link.href;
+            return true;
+        },
+
+        init() {
+            if (!settings.touchGestures || !('ontouchstart' in window)) return;
+            document.addEventListener('touchstart', event => {
+                if (event.touches.length !== 1 || this.shouldIgnoreTarget(event.target)) {
+                    this.start = null;
+                    return;
+                }
+                const touch = event.touches[0];
+                this.start = { x: touch.clientX, y: touch.clientY };
+            }, { passive: true });
+            document.addEventListener('touchend', event => {
+                if (!this.start || event.changedTouches.length !== 1) return;
+                const touch = event.changedTouches[0];
+                const direction = this.classifySwipe(this.start, { x: touch.clientX, y: touch.clientY });
+                this.start = null;
+                if (direction) this.navigate(direction);
+            }, { passive: true });
+        }
+    };
+
+    // =========================================================================
     // SESSION TABS MODULE
     // =========================================================================
     const SessionTabsModule = {
@@ -8617,6 +8677,7 @@
             getSettingsDiff: SettingsDiffModule.getDiff.bind(SettingsDiffModule),
             validateCanaryPayload: ApiCanaryModule.validatePayload.bind(ApiCanaryModule),
             shouldCheckApiCanary: ApiCanaryModule.shouldCheck.bind(ApiCanaryModule),
+            classifySwipe: TouchGestureModule.classifySwipe.bind(TouchGestureModule),
             createFactoryBackup: Storage.createFactoryBackup.bind(Storage),
             observeForTest: ObserverRegistry.observe.bind(ObserverRegistry),
             disconnectObservers: ObserverRegistry.disconnectAll.bind(ObserverRegistry),
@@ -8642,6 +8703,7 @@
         OldFaviconModule.init();
             SettingsModule.init();
             PageNavigatorModule.init();
+            TouchGestureModule.init();
             SubredditShortcutsModule.init();
             SavedViewsModule.init();
             MultiRedditModule.init();
